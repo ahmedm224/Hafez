@@ -6,10 +6,10 @@ const resources = {
   ar: {
     translation: {
       // App Header
-      appTitle: "حافظ - Hafez Quran Memorization",
+      appTitle: "حافظ",
       
       // Navigation & Controls
-      startRecitation: "ابدأ التلاوة المستمرة",
+      startRecitation: "ابدأ التلاوة",
       stopRecitation: "جاري الاستماع... اضغط لإيقاف",
       rewind: "البداية",
       sura: "السورة",
@@ -59,10 +59,10 @@ const resources = {
   en: {
     translation: {
       // App Header
-      appTitle: "Hafez - Quran Memorization",
+      appTitle: "Hafez",
       
       // Navigation & Controls
-      startRecitation: "Start Continuous Recitation",
+      startRecitation: "Start Recitation",
       stopRecitation: "Listening... Click to Stop",
       rewind: "Beginning",
       sura: "Sura",

@@ -413,8 +413,10 @@ function App() {
                 className="secondary-button"
                 onClick={rewindToBeginning} 
                 disabled={isListening}
+                aria-label={t('rewind')}
+                title={t('rewind')}
               >
-                ⏪ {t('rewind')}
+                ⏪
               </button>
             </div>
             
