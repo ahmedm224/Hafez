@@ -21,8 +21,11 @@ function App() {
   const [recitationHistory, setRecitationHistory] = useState<Array<{ayaIndex: number, correct: boolean, recitedText: string, expectedText: string, accuracy: number}>>([]);
   const [lastCorrectAya, setLastCorrectAya] = useState<number>(1);
   const [showFeedback, setShowFeedback] = useState(false);
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [pendingRecitation, setPendingRecitation] = useState<string>('');
   
   const recognitionRef = useRef<any>(null);
+  const processingTimeoutRef = useRef<any>(null);
 
   useEffect(() => {
     loadQuran().then(data => {
@@ -38,6 +41,18 @@ function App() {
     document.documentElement.setAttribute('dir', i18n.language === 'ar' ? 'rtl' : 'ltr');
     document.documentElement.setAttribute('lang', i18n.language);
   }, [i18n.language]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+      if (processingTimeoutRef.current) {
+        clearTimeout(processingTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const sura = quran?.suras.find(s => s.index === selectedSuraIdx);
   const aya = sura?.ayas.find(a => a.index === selectedAyaIdx);
@@ -72,6 +87,12 @@ function App() {
     recognition.onstart = () => {
       console.log('🎤 Voice recognition started');
       setIsListening(true);
+      setIsProcessing(false);
+      // Clear any pending processing
+      if (processingTimeoutRef.current) {
+        clearTimeout(processingTimeoutRef.current);
+        processingTimeoutRef.current = null;
+      }
     };
 
     recognition.onresult = (event: any) => {
@@ -89,10 +110,24 @@ function App() {
       }
       
       if (finalTranscript) {
-        setCurrentRecitation(prev => prev + ' ' + finalTranscript);
-        checkCurrentAya(currentRecitation + ' ' + finalTranscript);
+        const newRecitation = currentRecitation + ' ' + finalTranscript;
+        setCurrentRecitation(newRecitation);
+        
+        // If we're no longer listening but still processing, store for later processing
+        if (!isListening && isProcessing) {
+          setPendingRecitation(prev => prev + ' ' + finalTranscript);
+        } else {
+          checkCurrentAya(newRecitation);
+        }
       }
-      setRecognizedText(currentRecitation + ' ' + interimTranscript);
+      
+      const displayText = currentRecitation + ' ' + interimTranscript;
+      setRecognizedText(displayText);
+      
+      // Update pending recitation if processing after stop
+      if (!isListening && isProcessing && interimTranscript) {
+        setPendingRecitation(displayText);
+      }
     };
 
     recognition.onerror = (event: any) => {
@@ -104,6 +139,7 @@ function App() {
           errorMessage = t('microphonePermission');
           break;
         case 'no-speech':
+          // Don't show error for no-speech, it's normal
           return;
         case 'network':
           errorMessage = t('networkError');
@@ -115,14 +151,36 @@ function App() {
       
       alert(errorMessage);
       setIsListening(false);
+      setIsProcessing(false);
     };
 
     recognition.onend = () => {
       console.log('Voice recognition ended');
-      if (isListening) {
+      
+      // If we were processing buffered input, continue processing
+      if (isProcessing && pendingRecitation) {
+        console.log('Processing buffered recitation:', pendingRecitation);
+        checkCurrentAya(pendingRecitation);
+        setPendingRecitation('');
+        
+        // Set a timeout to finish processing
+        processingTimeoutRef.current = setTimeout(() => {
+          setIsProcessing(false);
+          if (recitationHistory.length > 0) {
+            setShowFeedback(true);
+            setSelectedAyaIdx(lastCorrectAya);
+          }
+        }, 2000); // Give 2 seconds for final processing
+      } else if (isListening) {
+        // Restart recognition if we're still supposed to be listening
         setTimeout(() => {
           if (recognitionRef.current && isListening) {
-            recognitionRef.current.start();
+            try {
+              recognitionRef.current.start();
+            } catch (error) {
+              console.error('Failed to restart recognition:', error);
+              setIsListening(false);
+            }
           }
         }, 100);
       }
@@ -138,12 +196,17 @@ function App() {
 
   const stopListening = () => {
     if (recognitionRef.current) {
-      recognitionRef.current.stop();
       setIsListening(false);
-      if (recitationHistory.length > 0) {
-        setShowFeedback(true);
-        setSelectedAyaIdx(lastCorrectAya);
-      }
+      setIsProcessing(true); // Set processing state to handle buffered input
+      
+      // Don't immediately stop - let it process any buffered audio
+      setTimeout(() => {
+        if (recognitionRef.current) {
+          recognitionRef.current.stop();
+        }
+      }, 500); // Give half a second for final audio processing
+      
+      console.log('🔴 Stopping recognition, entering processing mode...');
     }
   };
 
@@ -168,6 +231,15 @@ function App() {
     setAyaProgress(0);
     setShowCorrectAya(false);
     setShowFeedback(false);
+    setIsProcessing(false);
+    setPendingRecitation('');
+    
+    // Clear any pending processing timeout
+    if (processingTimeoutRef.current) {
+      clearTimeout(processingTimeoutRef.current);
+      processingTimeoutRef.current = null;
+    }
+    
     console.log(`🔄 Rewound to beginning of Sura ${selectedSuraIdx}`);
   };
 
@@ -190,110 +262,119 @@ function App() {
     console.log('Checking from Aya:', aya.index, 'in Sura:', sura.name);
     console.log('Full Recitation:', normalizedRecitation);
     
-    // Get the current Aya and potentially next few Ayas for multi-Aya detection
+    // Get the current Aya and all remaining Ayas in the Sura for comprehensive checking
     const currentAyaIndex = selectedAyaIdx - 1; // Convert to 0-based
-    const ayasToCheck = sura.ayas.slice(currentAyaIndex, Math.min(currentAyaIndex + 5, sura.ayas.length));
+    const ayasToCheck = sura.ayas.slice(currentAyaIndex);
     
-    // Build a combined text of multiple Ayas to match against
+    // Build a combined text of all remaining Ayas to match against
     let combinedExpected = '';
-    let ayaCompletions: Array<{ayaIndex: number, completed: boolean, matchedWords: number, totalWords: number}> = [];
+    let ayaCompletions: Array<{ayaIndex: number, completed: boolean, matchedWords: number, totalWords: number, startPosition: number}> = [];
     
+    // First pass: build combined text and establish positions
     for (let i = 0; i < ayasToCheck.length; i++) {
       const ayaText = normalize(ayasToCheck[i].text);
+      const startPosition = combinedExpected.length;
+      
       if (i > 0) combinedExpected += ' ';
       combinedExpected += ayaText;
       
-      console.log(`Expected Aya ${ayasToCheck[i].index}:`, ayaText);
-      
-      // Check if this individual Aya is completed within the recitation
       const ayaWords = ayaText.split(/\s+/);
-      const recitedWords = normalizedRecitation.split(/\s+/);
+      ayaCompletions.push({
+        ayaIndex: ayasToCheck[i].index,
+        completed: false,
+        matchedWords: 0,
+        totalWords: ayaWords.length,
+        startPosition: startPosition
+      });
       
-      // Enhanced matching: look for consecutive word sequences
-      let bestMatch = 0;
-      let bestStartIndex = -1;
-      
-      // Try to find the Aya as a consecutive sequence in the recitation
-      for (let startIdx = 0; startIdx <= recitedWords.length - ayaWords.length; startIdx++) {
-        let consecutiveMatches = 0;
-        
-        for (let j = 0; j < ayaWords.length; j++) {
-          if (startIdx + j < recitedWords.length && recitedWords[startIdx + j] === ayaWords[j]) {
-            consecutiveMatches++;
-          } else {
-            break; // Stop at first mismatch for this position
+      console.log(`Expected Aya ${ayasToCheck[i].index}:`, ayaText);
+    }
+    
+    const recitedWords = normalizedRecitation.split(/\s+/);
+    const combinedWords = combinedExpected.split(/\s+/);
+    
+    // Enhanced matching: progressive alignment from current position
+    let currentWordPosition = 0;
+    let longestMatch = 0;
+    
+    // Find the longest consecutive match from the beginning of the remaining text
+    for (let i = 0; i < Math.min(recitedWords.length, combinedWords.length); i++) {
+      if (recitedWords[i] === combinedWords[i]) {
+        longestMatch = i + 1;
+      } else {
+        // Try to find if this word appears later (allowing for small gaps)
+        let found = false;
+        for (let j = i + 1; j < Math.min(i + 3, combinedWords.length); j++) {
+          if (recitedWords[i] === combinedWords[j]) {
+            longestMatch = j + 1;
+            found = true;
+            break;
           }
         }
-        
-        if (consecutiveMatches > bestMatch) {
-          bestMatch = consecutiveMatches;
-          bestStartIndex = startIdx;
-        }
-        
-        // If we found a perfect match, break early
-        if (consecutiveMatches === ayaWords.length) {
+        if (!found) {
           break;
         }
       }
+    }
+    
+    console.log(`Longest consecutive match: ${longestMatch}/${combinedWords.length} words`);
+    
+    // Now assign completion status to individual Ayas based on the match
+    let wordCounter = 0;
+    for (let i = 0; i < ayaCompletions.length; i++) {
+      const completion = ayaCompletions[i];
+      const wordsInThisAya = completion.totalWords;
       
-      const completionPercentage = (bestMatch / ayaWords.length) * 100;
-      const isCompleted = completionPercentage >= 90;
+      // Calculate how many words of this Aya are covered by the match
+      const wordsMatchedInThisAya = Math.max(0, Math.min(wordsInThisAya, longestMatch - wordCounter));
+      completion.matchedWords = wordsMatchedInThisAya;
       
-      console.log(`Aya ${ayasToCheck[i].index} - Expected words:`, ayaWords);
-      console.log(`Aya ${ayasToCheck[i].index} - Best match: ${bestMatch}/${ayaWords.length} words starting at index ${bestStartIndex}`);
-      if (bestStartIndex >= 0) {
-        console.log(`Aya ${ayasToCheck[i].index} - Matched sequence:`, recitedWords.slice(bestStartIndex, bestStartIndex + bestMatch));
+      const completionPercentage = (wordsMatchedInThisAya / wordsInThisAya) * 100;
+      completion.completed = completionPercentage >= 85; // Slightly lower threshold for better detection
+      
+      console.log(`Aya ${completion.ayaIndex}: ${wordsMatchedInThisAya}/${wordsInThisAya} words (${completionPercentage.toFixed(1)}%) - ${completion.completed ? 'COMPLETED' : 'in progress'}`);
+      
+      wordCounter += wordsInThisAya;
+      
+      // Stop checking if we haven't matched enough of this Aya and it's not the current one
+      if (completion.ayaIndex > selectedAyaIdx && completionPercentage < 50) {
+        break;
       }
-      
-      ayaCompletions.push({
-        ayaIndex: ayasToCheck[i].index,
-        completed: isCompleted,
-        matchedWords: bestMatch,
-        totalWords: ayaWords.length
-      });
-      
-      console.log(`Aya ${ayasToCheck[i].index} completion: ${completionPercentage.toFixed(1)}% (${bestMatch}/${ayaWords.length} words)`);
     }
 
     // Process completions and advance if needed
     let nextAyaToAdvanceTo = selectedAyaIdx;
     let foundCompletedAya = false;
+    let highestCompletedAya = selectedAyaIdx - 1;
 
+    // First, mark all completed Ayas and find the highest completed one
     for (const completion of ayaCompletions) {
       if (completion.completed) {
         setCompleted(prev => ({ ...prev, [`${selectedSuraIdx}:${completion.ayaIndex}`]: true }));
-        setRecitationHistory(prev => [...prev, {
-          ayaIndex: completion.ayaIndex,
-          correct: true,
-          recitedText: normalizedRecitation,
-          expectedText: sura.ayas[completion.ayaIndex - 1].text,
-          accuracy: (completion.matchedWords / completion.totalWords) * 100
-        }]);
-        setLastCorrectAya(completion.ayaIndex);
-
-        if (completion.ayaIndex === selectedAyaIdx) {
-          foundCompletedAya = true;
-          nextAyaToAdvanceTo = selectedAyaIdx + 1;
-        } else if (completion.ayaIndex > selectedAyaIdx) {
-          for (let i = selectedAyaIdx; i <= completion.ayaIndex; i++) {
-            setCompleted(prev => ({ ...prev, [`${selectedSuraIdx}:${i}`]: true }));
-            if (i !== completion.ayaIndex) {
-              setRecitationHistory(prev => [...prev, {
-                ayaIndex: i,
-                correct: true,
-                recitedText: normalizedRecitation,
-                expectedText: sura.ayas[i - 1].text,
-                accuracy: 100
-              }]);
-            }
+        setRecitationHistory(prev => {
+          const existingIndex = prev.findIndex(h => h.ayaIndex === completion.ayaIndex);
+          const newEntry = {
+            ayaIndex: completion.ayaIndex,
+            correct: true,
+            recitedText: normalizedRecitation,
+            expectedText: sura.ayas[completion.ayaIndex - 1].text,
+            accuracy: (completion.matchedWords / completion.totalWords) * 100
+          };
+          if (existingIndex >= 0) {
+            const updated = [...prev];
+            updated[existingIndex] = newEntry;
+            return updated;
+          } else {
+            return [...prev, newEntry];
           }
-          nextAyaToAdvanceTo = completion.ayaIndex + 1;
-          foundCompletedAya = true;
-          setLastCorrectAya(completion.ayaIndex);
-          console.log(`✅ Advanced to Aya ${completion.ayaIndex} (skipped ahead)!`);
-          break;
-        }
-      } else if (completion.ayaIndex === selectedAyaIdx) {
+        });
+        
+        highestCompletedAya = Math.max(highestCompletedAya, completion.ayaIndex);
+        foundCompletedAya = true;
+        setLastCorrectAya(completion.ayaIndex);
+        console.log(`✅ Completed Aya ${completion.ayaIndex}!`);
+      } else {
+        // Update progress for partially completed Ayas
         const accuracy = (completion.matchedWords / completion.totalWords) * 100;
         if (accuracy > 0) {
           setRecitationHistory(prev => {
@@ -315,6 +396,12 @@ function App() {
           });
         }
       }
+    }
+
+    // If we completed Ayas, advance to the next uncompleted one
+    if (foundCompletedAya && highestCompletedAya >= selectedAyaIdx) {
+      nextAyaToAdvanceTo = highestCompletedAya + 1;
+      console.log(`🎯 Advancing from Aya ${selectedAyaIdx} to Aya ${nextAyaToAdvanceTo}`);
     }
 
     const currentAyaCompletion = ayaCompletions.find(c => c.ayaIndex === selectedAyaIdx);
@@ -401,8 +488,11 @@ function App() {
               <button 
                 className="primary-button"
                 onClick={isListening ? stopListening : startListening}
+                disabled={isProcessing}
               >
-                {isListening ? (
+                {isProcessing ? (
+                  <>⏳ {t('processing')}</>
+                ) : isListening ? (
                   <>🔴 {t('stopRecitation')}</>
                 ) : (
                   <>🎤 {t('startRecitation')}</>
@@ -522,3 +612,4 @@ function App() {
 }
 
 export default App;
+

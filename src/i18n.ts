@@ -11,6 +11,7 @@ const resources = {
       // Navigation & Controls
       startRecitation: "ابدأ التلاوة",
       stopRecitation: "جاري الاستماع... اضغط لإيقاف",
+      processing: "جاري المعالجة...",
       rewind: "البداية",
       sura: "السورة",
       aya: "الآية",
@@ -64,6 +65,7 @@ const resources = {
       // Navigation & Controls
       startRecitation: "Start Recitation",
       stopRecitation: "Listening... Click to Stop",
+      processing: "Processing...",
       rewind: "Beginning",
       sura: "Sura",
       aya: "Aya",
