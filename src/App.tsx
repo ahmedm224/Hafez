@@ -294,7 +294,6 @@ function App() {
     const combinedWords = combinedExpected.split(/\s+/);
     
     // Enhanced matching: progressive alignment from current position
-    let currentWordPosition = 0;
     let longestMatch = 0;
     
     // Find the longest consecutive match from the beginning of the remaining text
