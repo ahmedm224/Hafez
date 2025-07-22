@@ -5,7 +5,6 @@ import { useTheme } from '../hooks/useTheme';
 export const Header: React.FC = () => {
   const { t, i18n } = useTranslation();
   const { theme, toggleTheme } = useTheme();
-  const isRTL = i18n.language === 'ar';
 
   const toggleLanguage = () => {
     const newLang = i18n.language === 'ar' ? 'en' : 'ar';

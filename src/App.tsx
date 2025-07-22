@@ -1,34 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { loadQuran } from './quranParser';
-import type { Aya, Sura, QuranData } from './quranParser';
+import type { QuranData } from './quranParser';
 import { Header } from './components/Header';
 import { useTheme } from './hooks/useTheme';
 
-function compareWords(expected: string, actual: string): { word: string; correct: boolean }[] {
-  // Enhanced normalize function for Arabic text
-  const normalize = (str: string) => str
-    .replace(/[\u064B-\u0652]/g, '') // Remove diacritics
-    .replace(/[\u200C\u200F]/g, '') // Remove zero-width characters
-    .replace(/أ|إ|آ/g, 'ا') // Normalize alif variations
-    .replace(/ة/g, 'ه') // Normalize ta marbuta to ha
-    .replace(/ي/g, 'ى') // Normalize ya variations
-    .replace(/\s+/g, ' ') // Normalize spaces
-    .trim()
-    .toLowerCase();
-  
-  const expectedWords = normalize(expected).split(/\s+/);
-  const actualWords = normalize(actual).split(/\s+/);
-  return expectedWords.map((word, i) => ({
-    word,
-    correct: actualWords[i] === word,
-  }));
-}
-
 function App() {
   const { t, i18n } = useTranslation();
-  const { theme } = useTheme();
-  const isRTL = i18n.language === 'ar';
+  useTheme(); // Initialize theme hook
   
   const [quran, setQuran] = useState<QuranData | null>(null);
   const [selectedSuraIdx, setSelectedSuraIdx] = useState<number>(1);
@@ -37,7 +16,6 @@ function App() {
   const [recognizedText, setRecognizedText] = useState<string>('');
   const [completed, setCompleted] = useState<{ [key: string]: boolean }>({});
   const [currentRecitation, setCurrentRecitation] = useState<string>('');
-  const [recitationBuffer, setRecitationBuffer] = useState<string[]>([]);
   const [ayaProgress, setAyaProgress] = useState<number>(0);
   const [showCorrectAya, setShowCorrectAya] = useState<boolean>(false);
   const [recitationHistory, setRecitationHistory] = useState<Array<{ayaIndex: number, correct: boolean, recitedText: string, expectedText: string, accuracy: number}>>([]);
@@ -54,6 +32,12 @@ function App() {
       console.error('❌ Failed to load Quran:', err);
     });
   }, []);
+
+  // Update document direction when language changes
+  useEffect(() => {
+    document.documentElement.setAttribute('dir', i18n.language === 'ar' ? 'rtl' : 'ltr');
+    document.documentElement.setAttribute('lang', i18n.language);
+  }, [i18n.language]);
 
   const sura = quran?.suras.find(s => s.index === selectedSuraIdx);
   const aya = sura?.ayas.find(a => a.index === selectedAyaIdx);
@@ -105,7 +89,6 @@ function App() {
       }
       
       if (finalTranscript) {
-        setRecitationBuffer(prev => [...prev, finalTranscript.trim()]);
         setCurrentRecitation(prev => prev + ' ' + finalTranscript);
         checkCurrentAya(currentRecitation + ' ' + finalTranscript);
       }
@@ -181,7 +164,6 @@ function App() {
     setRecitationHistory([]);
     setLastCorrectAya(1);
     setCurrentRecitation('');
-    setRecitationBuffer([]);
     setRecognizedText('');
     setAyaProgress(0);
     setShowCorrectAya(false);
@@ -358,8 +340,6 @@ function App() {
           alert(t('congratulations'));
         }
         setCurrentRecitation('');
-        setRecitationBuffer([]);
-        setShowCorrectAya(false);
         setRecognizedText('');
         setAyaProgress(0);
       }, 1500);
