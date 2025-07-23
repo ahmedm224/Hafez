@@ -117,7 +117,10 @@ function App() {
         if (!isListening && isProcessing) {
           setPendingRecitation(prev => prev + ' ' + finalTranscript);
         } else {
-          checkCurrentAya(newRecitation);
+          const result = checkCurrentAya(newRecitation);
+          if (result?.shouldAdvance) {
+            handleAyaAdvancement(result.nextAyaIdx);
+          }
         }
       }
       
@@ -160,7 +163,10 @@ function App() {
       // If we were processing buffered input, continue processing
       if (isProcessing && pendingRecitation) {
         console.log('Processing buffered recitation:', pendingRecitation);
-        checkCurrentAya(pendingRecitation);
+        const result = checkCurrentAya(pendingRecitation);
+        if (result?.shouldAdvance) {
+          handleAyaAdvancement(result.nextAyaIdx);
+        }
         setPendingRecitation('');
         
         // Set a timeout to finish processing
@@ -170,7 +176,7 @@ function App() {
             setShowFeedback(true);
             setSelectedAyaIdx(lastCorrectAya);
           }
-        }, 2000); // Give 2 seconds for final processing
+        }, 800); // Reduced to 800ms for faster response
       } else if (isListening) {
         // Restart recognition if we're still supposed to be listening
         setTimeout(() => {
@@ -204,10 +210,33 @@ function App() {
         if (recognitionRef.current) {
           recognitionRef.current.stop();
         }
-      }, 500); // Give half a second for final audio processing
+      }, 200); // Reduced to 200ms for faster response
       
       console.log('🔴 Stopping recognition, entering processing mode...');
     }
+  };
+
+  const handleAyaAdvancement = (nextAyaIdx: number) => {
+    setShowCorrectAya(true);
+    setTimeout(() => {
+      if (sura && nextAyaIdx <= sura.ayas.length) {
+        setSelectedAyaIdx(nextAyaIdx);
+        console.log('Moving to Aya:', nextAyaIdx);
+      } else if (quran && selectedSuraIdx < quran.suras.length) {
+        setSelectedSuraIdx(selectedSuraIdx + 1);
+        setSelectedAyaIdx(1);
+      } else {
+        setIsListening(false);
+        if (recognitionRef.current) {
+          recognitionRef.current.stop();
+        }
+        alert(t('congratulations'));
+      }
+      setCurrentRecitation('');
+      setRecognizedText('');
+      setAyaProgress(0);
+      setShowCorrectAya(false);
+    }, 1000); // Reduced from 1500ms to 1000ms for faster response
   };
 
   const rewindToBeginning = () => {
@@ -246,7 +275,7 @@ function App() {
   const checkCurrentAya = (fullRecitation: string) => {
     if (!aya || !sura) return;
     
-    // Enhanced normalize function for Arabic text
+    // Simplified normalize function for Arabic text
     const normalize = (str: string) => str
       .replace(/[\u064B-\u0652]/g, '') // Remove diacritics
       .replace(/[\u200C\u200F]/g, '') // Remove zero-width characters
@@ -259,105 +288,64 @@ function App() {
     
     const normalizedRecitation = normalize(fullRecitation);
     
-    console.log('Checking from Aya:', aya.index, 'in Sura:', sura.name);
-    console.log('Full Recitation:', normalizedRecitation);
+    console.log('Checking Aya:', aya.index, 'in Sura:', sura.name);
     
-    // Get the current Aya and all remaining Ayas in the Sura for comprehensive checking
-    const currentAyaIndex = selectedAyaIdx - 1; // Convert to 0-based
-    const ayasToCheck = sura.ayas.slice(currentAyaIndex);
+    // Only check current Aya + next 2 Ayas max (much more efficient)
+    const currentAyaIndex = selectedAyaIdx - 1;
+    const maxAyasToCheck = Math.min(3, sura.ayas.length - currentAyaIndex);
+    const ayasToCheck = sura.ayas.slice(currentAyaIndex, currentAyaIndex + maxAyasToCheck);
     
-    // Build a combined text of all remaining Ayas to match against
-    let combinedExpected = '';
-    let ayaCompletions: Array<{ayaIndex: number, completed: boolean, matchedWords: number, totalWords: number, startPosition: number}> = [];
+    // Simple word-by-word matching for efficiency
+    const recitedWords = normalizedRecitation.split(/\s+/).filter(w => w.length > 0);
+    let currentWordIndex = 0;
+    let completedAyas: number[] = [];
     
-    // First pass: build combined text and establish positions
     for (let i = 0; i < ayasToCheck.length; i++) {
-      const ayaText = normalize(ayasToCheck[i].text);
-      const startPosition = combinedExpected.length;
+      const ayaToCheck = ayasToCheck[i];
+      const normalizedAyaText = normalize(ayaToCheck.text);
+      const ayaWords = normalizedAyaText.split(/\s+/).filter(w => w.length > 0);
       
-      if (i > 0) combinedExpected += ' ';
-      combinedExpected += ayaText;
+      console.log(`Checking Aya ${ayaToCheck.index}: "${normalizedAyaText}"`);
       
-      const ayaWords = ayaText.split(/\s+/);
-      ayaCompletions.push({
-        ayaIndex: ayasToCheck[i].index,
-        completed: false,
-        matchedWords: 0,
-        totalWords: ayaWords.length,
-        startPosition: startPosition
-      });
+      // Count consecutive matches from current position
+      let matchedWords = 0;
+      let tempWordIndex = currentWordIndex;
       
-      console.log(`Expected Aya ${ayasToCheck[i].index}:`, ayaText);
-    }
-    
-    const recitedWords = normalizedRecitation.split(/\s+/);
-    const combinedWords = combinedExpected.split(/\s+/);
-    
-    // Enhanced matching: progressive alignment from current position
-    let longestMatch = 0;
-    
-    // Find the longest consecutive match from the beginning of the remaining text
-    for (let i = 0; i < Math.min(recitedWords.length, combinedWords.length); i++) {
-      if (recitedWords[i] === combinedWords[i]) {
-        longestMatch = i + 1;
-      } else {
-        // Try to find if this word appears later (allowing for small gaps)
-        let found = false;
-        for (let j = i + 1; j < Math.min(i + 3, combinedWords.length); j++) {
-          if (recitedWords[i] === combinedWords[j]) {
-            longestMatch = j + 1;
-            found = true;
-            break;
+      for (let j = 0; j < ayaWords.length && tempWordIndex < recitedWords.length; j++) {
+        if (recitedWords[tempWordIndex] === ayaWords[j]) {
+          matchedWords++;
+          tempWordIndex++;
+        } else {
+          // Allow skipping 1 word for minor recognition errors
+          if (tempWordIndex + 1 < recitedWords.length && 
+              recitedWords[tempWordIndex + 1] === ayaWords[j]) {
+            tempWordIndex += 2; // skip the mismatched word
+            matchedWords++;
+          } else {
+            break; // Stop matching this Aya
           }
         }
-        if (!found) {
-          break;
-        }
       }
-    }
-    
-    console.log(`Longest consecutive match: ${longestMatch}/${combinedWords.length} words`);
-    
-    // Now assign completion status to individual Ayas based on the match
-    let wordCounter = 0;
-    for (let i = 0; i < ayaCompletions.length; i++) {
-      const completion = ayaCompletions[i];
-      const wordsInThisAya = completion.totalWords;
       
-      // Calculate how many words of this Aya are covered by the match
-      const wordsMatchedInThisAya = Math.max(0, Math.min(wordsInThisAya, longestMatch - wordCounter));
-      completion.matchedWords = wordsMatchedInThisAya;
+      const completionPercentage = ayaWords.length > 0 ? (matchedWords / ayaWords.length) * 100 : 0;
+      const isCompleted = completionPercentage >= 80; // Reasonable threshold
       
-      const completionPercentage = (wordsMatchedInThisAya / wordsInThisAya) * 100;
-      completion.completed = completionPercentage >= 85; // Slightly lower threshold for better detection
+      console.log(`Aya ${ayaToCheck.index}: ${matchedWords}/${ayaWords.length} words (${completionPercentage.toFixed(1)}%)`);
       
-      console.log(`Aya ${completion.ayaIndex}: ${wordsMatchedInThisAya}/${wordsInThisAya} words (${completionPercentage.toFixed(1)}%) - ${completion.completed ? 'COMPLETED' : 'in progress'}`);
-      
-      wordCounter += wordsInThisAya;
-      
-      // Stop checking if we haven't matched enough of this Aya and it's not the current one
-      if (completion.ayaIndex > selectedAyaIdx && completionPercentage < 50) {
-        break;
-      }
-    }
-
-    // Process completions and advance if needed
-    let nextAyaToAdvanceTo = selectedAyaIdx;
-    let foundCompletedAya = false;
-    let highestCompletedAya = selectedAyaIdx - 1;
-
-    // First, mark all completed Ayas and find the highest completed one
-    for (const completion of ayaCompletions) {
-      if (completion.completed) {
-        setCompleted(prev => ({ ...prev, [`${selectedSuraIdx}:${completion.ayaIndex}`]: true }));
+      if (isCompleted) {
+        completedAyas.push(ayaToCheck.index);
+        currentWordIndex = tempWordIndex; // Advance word position
+        
+        // Mark as completed
+        setCompleted(prev => ({ ...prev, [`${selectedSuraIdx}:${ayaToCheck.index}`]: true }));
         setRecitationHistory(prev => {
-          const existingIndex = prev.findIndex(h => h.ayaIndex === completion.ayaIndex);
+          const existingIndex = prev.findIndex(h => h.ayaIndex === ayaToCheck.index);
           const newEntry = {
-            ayaIndex: completion.ayaIndex,
+            ayaIndex: ayaToCheck.index,
             correct: true,
             recitedText: normalizedRecitation,
-            expectedText: sura.ayas[completion.ayaIndex - 1].text,
-            accuracy: (completion.matchedWords / completion.totalWords) * 100
+            expectedText: ayaToCheck.text,
+            accuracy: completionPercentage
           };
           if (existingIndex >= 0) {
             const updated = [...prev];
@@ -367,69 +355,26 @@ function App() {
             return [...prev, newEntry];
           }
         });
-        
-        highestCompletedAya = Math.max(highestCompletedAya, completion.ayaIndex);
-        foundCompletedAya = true;
-        setLastCorrectAya(completion.ayaIndex);
-        console.log(`✅ Completed Aya ${completion.ayaIndex}!`);
+        setLastCorrectAya(ayaToCheck.index);
+        console.log(`✅ Completed Aya ${ayaToCheck.index}!`);
       } else {
-        // Update progress for partially completed Ayas
-        const accuracy = (completion.matchedWords / completion.totalWords) * 100;
-        if (accuracy > 0) {
-          setRecitationHistory(prev => {
-            const existingIndex = prev.findIndex(h => h.ayaIndex === completion.ayaIndex);
-            const newEntry = {
-              ayaIndex: completion.ayaIndex,
-              correct: false,
-              recitedText: normalizedRecitation,
-              expectedText: sura.ayas[completion.ayaIndex - 1].text,
-              accuracy
-            };
-            if (existingIndex >= 0) {
-              const updated = [...prev];
-              updated[existingIndex] = newEntry;
-              return updated;
-            } else {
-              return [...prev, newEntry];
-            }
-          });
+        // Update progress for current Aya only
+        if (ayaToCheck.index === selectedAyaIdx && completionPercentage > 0) {
+          setAyaProgress(completionPercentage);
         }
+        break; // Stop checking if current Aya isn't completed
       }
     }
 
-    // If we completed Ayas, advance to the next uncompleted one
-    if (foundCompletedAya && highestCompletedAya >= selectedAyaIdx) {
-      nextAyaToAdvanceTo = highestCompletedAya + 1;
-      console.log(`🎯 Advancing from Aya ${selectedAyaIdx} to Aya ${nextAyaToAdvanceTo}`);
+    // Advance to next Aya if current one is completed
+    if (completedAyas.includes(selectedAyaIdx)) {
+      const nextAya = Math.max(...completedAyas) + 1;
+      console.log(`🎯 Advancing to Aya ${nextAya}`);
+      
+      return { shouldAdvance: true, nextAyaIdx: nextAya };
     }
-
-    const currentAyaCompletion = ayaCompletions.find(c => c.ayaIndex === selectedAyaIdx);
-    if (currentAyaCompletion) {
-      const progressPercentage = (currentAyaCompletion.matchedWords / currentAyaCompletion.totalWords) * 100;
-      setAyaProgress(progressPercentage);
-    }
-
-    if (foundCompletedAya) {
-      setShowCorrectAya(true);
-      setTimeout(() => {
-        if (nextAyaToAdvanceTo <= sura.ayas.length) {
-          setSelectedAyaIdx(nextAyaToAdvanceTo);
-          console.log('Moving to Aya:', nextAyaToAdvanceTo);
-        } else if (quran && selectedSuraIdx < quran.suras.length) {
-          setSelectedSuraIdx(selectedSuraIdx + 1);
-          setSelectedAyaIdx(1);
-        } else {
-          setIsListening(false);
-          if (recognitionRef.current) {
-            recognitionRef.current.stop();
-          }
-          alert(t('congratulations'));
-        }
-        setCurrentRecitation('');
-        setRecognizedText('');
-        setAyaProgress(0);
-      }, 1500);
-    }
+    
+    return { shouldAdvance: false, nextAyaIdx: selectedAyaIdx };
   };
 
   return (
