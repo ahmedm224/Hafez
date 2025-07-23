@@ -345,9 +345,12 @@ function App() {
     
     console.log('🔍 Checking recitation against multiple Ayas starting from:', aya.index);
     
-    // Simple normalization
+    // Simple but effective normalization for clean Quran text
     const normalize = (str: string) => str
-      .replace(/[\u064B-\u0652]/g, '') // Remove diacritics
+      .replace(/[\u064B-\u0652]/g, '') // Remove diacritics (just in case)
+      .replace(/إ|أ|آ/g, 'ا') // Normalize all alif variations to simple alif
+      .replace(/ة/g, 'ه') // Ta marbuta to ha  
+      .replace(/ي/g, 'ى') // Ya variations
       .replace(/\s+/g, ' ') // Normalize spaces
       .trim()
       .toLowerCase();
@@ -519,30 +522,28 @@ function App() {
   const enhancedArabicMatch = (word1: string, word2: string): boolean => {
     if (!word1 || !word2) return false;
     
-    // Additional Arabic normalization for comparison
-    const deepNormalize = (str: string) => str
-      .replace(/[\u064B-\u0652]/g, '') // Remove all diacritics
-      .replace(/[\u200C\u200D\u200E\u200F]/g, '') // Remove zero-width characters
-      .replace(/أ|إ|آ/g, 'ا') // Normalize alif variations
+    // Focused normalization for speech recognition vs clean Quran text
+    const speechNormalize = (str: string) => str
+      .replace(/[\u064B-\u0652]/g, '') // Remove diacritics
+      .replace(/إ|أ|آ/g, 'ا') // All alif variations to simple alif (main issue)
       .replace(/ة/g, 'ه') // Ta marbuta to ha
       .replace(/ي/g, 'ى') // Ya variations
       .replace(/ک/g, 'ك') // Farsi kaf to Arabic kaf
       .replace(/ؤ/g, 'و') // Hamza on waw
       .replace(/ئ/g, 'ي') // Hamza on ya
-      .replace(/\s+/g, '') // Remove all spaces for this comparison
       .trim()
       .toLowerCase();
     
-    const norm1 = deepNormalize(word1);
-    const norm2 = deepNormalize(word2);
+    const norm1 = speechNormalize(word1);
+    const norm2 = speechNormalize(word2);
     
-    // Exact match after deep normalization
+    // Exact match after normalization should work for most cases now
     if (norm1 === norm2) return true;
     
-    // Similarity check - allow for minor differences
+    // Fallback: similarity check for edge cases
     if (norm1.length > 2 && norm2.length > 2) {
       const similarity = calculateSimilarity(norm1, norm2);
-      return similarity >= 0.8; // 80% similarity threshold
+      return similarity >= 0.85; // Slightly higher threshold since text is cleaner
     }
     
     return false;
