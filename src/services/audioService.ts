@@ -102,18 +102,13 @@ export class WhisperTranscriptionService {
         console.warn('⚠️ API test failed:', testError);
       }
 
-      // Convert blob to base64 for transmission using a more efficient method for large files
-      console.log('🔄 Converting audio to base64...');
-      const base64Audio = await this.blobToBase64(audioBlob);
-      console.log('✅ Base64 conversion complete, length:', base64Audio.length);
-
-      console.log('📡 Making request to transcription API...');
+      console.log(' Making request to transcription API...');
       const response = await fetch(`${this.baseUrl}/transcribe`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/octet-stream',
+          'Content-Type': 'audio/webm',
         },
-        body: base64Audio
+        body: audioBlob // Send raw binary data directly
       });
 
       console.log('📡 Response status:', response.status);
@@ -157,21 +152,6 @@ export class WhisperTranscriptionService {
       
       throw error;
     }
-  }
-
-  // More efficient base64 conversion for large files
-  private async blobToBase64(blob: Blob): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = reader.result as string;
-        // Remove the data URL prefix (data:audio/webm;base64,)
-        const base64 = result.split(',')[1];
-        resolve(base64);
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
   }
 
   private async transcribeWithTestFunction(audioBlob: Blob): Promise<string> {

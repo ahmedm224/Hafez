@@ -40,12 +40,13 @@ exports.handler = async (event, context) => {
       };
     }
 
-    // Handle base64 encoded audio data
+    // Handle raw binary audio data
     let audioBuffer;
     try {
-      audioBuffer = Buffer.from(event.body, 'base64');
+      // The event.body contains raw binary data when content-type is audio/webm
+      audioBuffer = Buffer.from(event.body, event.isBase64Encoded ? 'base64' : 'binary');
     } catch (error) {
-      console.error('Error decoding base64 audio:', error);
+      console.error('Error processing audio data:', error);
       return {
         statusCode: 400,
         headers: {
@@ -70,6 +71,7 @@ exports.handler = async (event, context) => {
     // Create form data for Fireworks AI
     const formData = new FormData();
     
+    // Send the raw audio buffer directly
     formData.append('file', audioBuffer, {
       filename: 'audio.webm',
       contentType: 'audio/webm'
