@@ -23,10 +23,15 @@ function App() {
     volumeLevel: 0
   });
   
-  // Legacy state for UI compatibility
+  // Enhanced state for better feedback
   const [completed, setCompleted] = useState<{ [key: string]: boolean }>({});
   const [currentMatch, setCurrentMatch] = useState<MatchResult | null>(null);
-  const [noMatchTranscriptions, setNoMatchTranscriptions] = useState<string[]>([]);
+  const [feedbackHistory, setFeedbackHistory] = useState<Array<{
+    transcription: string;
+    isMatch: boolean;
+    matchDetails?: MatchResult;
+    timestamp: number;
+  }>>([]);
   const [showFeedback, setShowFeedback] = useState(false);
   const [countdown, setCountdown] = useState<number>(0);
   const [isCountingDown, setIsCountingDown] = useState<boolean>(false);
@@ -124,6 +129,14 @@ function App() {
           setCurrentMatch(match);
           setShowFeedback(true);
           
+          // Add to feedback history as successful match
+          setFeedbackHistory(prev => [{
+            transcription: sessionState.recentTranscriptions[0] || 'Unknown',
+            isMatch: true,
+            matchDetails: match,
+            timestamp: Date.now()
+          }, ...prev.slice(0, 9)]); // Keep last 10 entries
+          
           // Mark ayahs as completed
           for (let i = match.startAyah; i <= match.endAyah; i++) {
             const key = `${selectedSuraIdx}:${i}`;
@@ -145,7 +158,13 @@ function App() {
         
         onNoMatch: (transcription: string) => {
           console.log('❌ No match for:', transcription);
-          setNoMatchTranscriptions(prev => [transcription, ...prev.slice(0, 4)]);
+          
+          // Add to feedback history as failed match
+          setFeedbackHistory(prev => [{
+            transcription,
+            isMatch: false,
+            timestamp: Date.now()
+          }, ...prev.slice(0, 9)]); // Keep last 10 entries
         },
         
         onStateChange: (state: SessionState) => {
@@ -231,23 +250,31 @@ function App() {
         {/* Sura/Aya Selector */}
         <section className="selector-section">
           <div className="selector-container">
+            <div className="selector-header">
+              <h3>{t('selectStartingPosition')}</h3>
+              <p className="selector-description">{t('selectStartingPositionDesc')}</p>
+            </div>
+            
             <div className="selector-group">
               <label>{t('selectSura')}:</label>
               <select 
                 value={selectedSuraIdx} 
-                onChange={(e) => setSelectedSuraIdx(Number(e.target.value))}
+                onChange={(e) => {
+                  setSelectedSuraIdx(Number(e.target.value));
+                  setSelectedAyaIdx(1); // Reset to first ayah when changing sura
+                }}
                 disabled={sessionState.isActive}
               >
                 {quran.suras.map(sura => (
                   <option key={sura.index} value={sura.index}>
-                    {sura.index}. {sura.name}
+                    {sura.index}. {sura.name} ({sura.ayas.length} {t('ayahs')})
                   </option>
                 ))}
               </select>
             </div>
             
             <div className="selector-group">
-              <label>{t('selectAya')}:</label>
+              <label>{t('selectStartingAya')}:</label>
               <select 
                 value={selectedAyaIdx} 
                 onChange={(e) => setSelectedAyaIdx(Number(e.target.value))}
@@ -255,11 +282,19 @@ function App() {
               >
                 {sura?.ayas.map(aya => (
                   <option key={aya.index} value={aya.index}>
-                    {aya.index}
+                    {t('aya')} {aya.index}
                   </option>
                 )) || []}
               </select>
             </div>
+            
+            {sessionState.isActive && (
+              <div className="current-session-info">
+                <p className="session-status">
+                  📍 {t('sessionActive')}: {t('sura')} {selectedSuraIdx}, {t('startingFrom')} {t('aya')} {selectedAyaIdx}
+                </p>
+              </div>
+            )}
           </div>
         </section>
 
@@ -366,6 +401,49 @@ function App() {
           </section>
         )}
 
+        {/* Unified Feedback History */}
+        {feedbackHistory.length > 0 && (
+          <section className="feedback-history-section">
+            <h3>{t('recitationFeedback')}</h3>
+            <div className="feedback-history-list">
+              {feedbackHistory.map((feedback) => (
+                <div key={feedback.timestamp} className={`feedback-item ${feedback.isMatch ? 'correct' : 'incorrect'}`}>
+                  <div className="feedback-content">
+                    <div className="feedback-status">
+                      {feedback.isMatch ? (
+                        <span className="status-icon correct">✅</span>
+                      ) : (
+                        <span className="status-icon incorrect">❌</span>
+                      )}
+                    </div>
+                    <div className="feedback-details">
+                      <div className="transcription-text">
+                        <strong>{t('recited')}:</strong> "{feedback.transcription}"
+                      </div>
+                      {feedback.isMatch && feedback.matchDetails ? (
+                        <div className="match-info">
+                          <span className="match-result">
+                            {t('matched')} {t('ayahs')} {feedback.matchDetails.startAyah}-{feedback.matchDetails.endAyah}
+                          </span>
+                          <span className="accuracy-score">
+                            {t('accuracy')}: {(feedback.matchDetails.accuracy * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="no-match-info">
+                          <span className="no-match-result">
+                            {t('noMatchFound')} - {t('tryAgainOrSkip')}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         {/* Recent Transcriptions */}
         {sessionState.recentTranscriptions.length > 0 && (
           <section className="transcriptions-section">
@@ -374,20 +452,6 @@ function App() {
               {sessionState.recentTranscriptions.map((transcription, index) => (
                 <div key={index} className="transcription-item">
                   <span className="transcription-text">{transcription}</span>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* No Match Transcriptions */}
-        {noMatchTranscriptions.length > 0 && (
-          <section className="no-match-section">
-            <h3>{t('noMatchTranscriptions')}</h3>
-            <div className="no-match-list">
-              {noMatchTranscriptions.map((transcription, index) => (
-                <div key={index} className="no-match-item">
-                  <span className="no-match-text">{transcription}</span>
                 </div>
               ))}
             </div>

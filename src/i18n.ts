@@ -66,6 +66,11 @@ const resources = {
       // New Advanced Features
       selectSura: "اختر السورة",
       selectAya: "اختر الآية",
+      selectStartingPosition: "اختر نقطة البداية",
+      selectStartingPositionDesc: "يمكنك البدء من أي آية في السورة - لا حاجة للبدء من الآية الأولى",
+      selectStartingAya: "اختر آية البداية",
+      sessionActive: "الجلسة نشطة",
+      startingFrom: "بدءاً من",
       currentAya: "الآية الحالية",
       rewindToBeginning: "العودة للبداية",
       skip: "تخطي",
@@ -79,6 +84,9 @@ const resources = {
       ayahs: "آيات",
       recentTranscriptions: "التسجيلات الأخيرة",
       noMatchTranscriptions: "تسجيلات غير متطابقة",
+      recitationFeedback: "ملاحظات التلاوة",
+      noMatchFound: "لم يتم العثور على تطابق",
+      tryAgainOrSkip: "حاول مرة أخرى أو تخطي",
       
       // Accessibility
       toggleLanguage: "تبديل اللغة",
@@ -150,6 +158,11 @@ const resources = {
       // New Advanced Features
       selectSura: "Select Sura",
       selectAya: "Select Aya",
+      selectStartingPosition: "Select Starting Position",
+      selectStartingPositionDesc: "You can start from any ayah in the sura - no need to start from the first ayah",
+      selectStartingAya: "Select Starting Aya",
+      sessionActive: "Session Active",
+      startingFrom: "starting from",
       currentAya: "Current Aya",
       rewindToBeginning: "Return to Beginning",
       skip: "Skip",
@@ -163,6 +176,9 @@ const resources = {
       ayahs: "Ayahs",
       recentTranscriptions: "Recent Transcriptions",
       noMatchTranscriptions: "No Match Transcriptions",
+      recitationFeedback: "Recitation Feedback",
+      noMatchFound: "No match found",
+      tryAgainOrSkip: "Try again or skip",
       
       // Accessibility
       toggleLanguage: "Toggle Language",

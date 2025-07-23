@@ -76,9 +76,16 @@ export class AdvancedRecitationMatcher {
 
     this.session.slidingWindows = [];
     
-    // Create overlapping windows starting from current position
-    for (let i = Math.max(0, this.session.currentPosition - 1); i < sura.ayas.length; i++) {
-      for (let windowSize = 2; windowSize <= this.session.windowSize; windowSize++) {
+    // Create overlapping windows around current position with wider coverage
+    const windowRadius = Math.max(5, this.session.windowSize * 2); // Expand search area
+    const startPos = Math.max(0, this.session.currentPosition - windowRadius - 1);
+    const endPos = Math.min(sura.ayas.length, this.session.currentPosition + windowRadius);
+    
+    console.log(`🔍 Building windows from ayah ${startPos + 1} to ${endPos} (current position: ${this.session.currentPosition})`);
+    
+    // Create overlapping windows for flexible matching
+    for (let i = startPos; i < endPos; i++) {
+      for (let windowSize = 1; windowSize <= this.session.windowSize; windowSize++) {
         if (i + windowSize <= sura.ayas.length) {
           const windowAyas = sura.ayas.slice(i, i + windowSize);
           const combinedText = windowAyas.map(a => a.text).join(' ');
@@ -95,7 +102,7 @@ export class AdvancedRecitationMatcher {
       }
     }
 
-    console.log(`🔄 Built ${this.session.slidingWindows.length} sliding windows from position ${this.session.currentPosition}`);
+    console.log(`🔄 Built ${this.session.slidingWindows.length} sliding windows around position ${this.session.currentPosition}`);
   }
 
   // Process audio chunk and find best match using sliding windows
