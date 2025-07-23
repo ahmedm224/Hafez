@@ -232,6 +232,32 @@ main {
   line-height: 2;
 }
 
+/* Countdown Display */
+.countdown-display {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-md);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.countdown-number {
+  font-size: 4rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  min-width: 80px;
+  text-align: center;
+}
+
+.countdown-text {
+  font-size: var(--font-size-lg);
+  color: var(--text-secondary);
+  font-weight: 500;
+  text-align: center;
+}
+
 /* Controls */
 .controls {
   display: flex;

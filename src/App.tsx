@@ -28,9 +28,12 @@ function App() {
     currentlyChecking: number;
     results: Array<{ayaIndex: number, completed: boolean, accuracy: number}>;
   }>({ ayasChecked: 0, totalAyas: 0, currentlyChecking: 0, results: [] });
+  const [countdown, setCountdown] = useState<number>(0);
+  const [isCountingDown, setIsCountingDown] = useState<boolean>(false);
   
   const recognitionRef = useRef<any>(null);
   const processingTimeoutRef = useRef<any>(null);
+  const countdownIntervalRef = useRef<any>(null);
 
   useEffect(() => {
     loadQuran().then(data => {
@@ -56,6 +59,9 @@ function App() {
       if (processingTimeoutRef.current) {
         clearTimeout(processingTimeoutRef.current);
       }
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+      }
     };
   }, []);
 
@@ -79,6 +85,25 @@ function App() {
       return;
     }
 
+    // Start countdown first
+    setIsCountingDown(true);
+    setCountdown(3);
+    
+    countdownIntervalRef.current = setInterval(() => {
+      setCountdown(prev => {
+        if (prev <= 1) {
+          clearInterval(countdownIntervalRef.current);
+          setIsCountingDown(false);
+          // Start actual recognition after countdown
+          initializeRecognition();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
+
+  const initializeRecognition = () => {
     const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
     const recognition = new SpeechRecognition();
     
@@ -90,7 +115,7 @@ function App() {
     recognitionRef.current = recognition;
 
     recognition.onstart = () => {
-      console.log('🎤 Voice recognition started');
+      console.log('🎤 Voice recognition started after countdown');
       setIsListening(true);
       setIsProcessing(false);
       setShowFeedback(false);
@@ -193,6 +218,13 @@ function App() {
   };
 
   const stopListening = () => {
+    // Clear countdown if it's running
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+      setIsCountingDown(false);
+      setCountdown(0);
+    }
+    
     if (recognitionRef.current) {
       console.log('🔴 Stopping recognition immediately...');
       setIsListening(false);
@@ -267,6 +299,13 @@ function App() {
   };
 
   const rewindToBeginning = () => {
+    // Clear countdown if it's running
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+      setIsCountingDown(false);
+      setCountdown(0);
+    }
+    
     // Keep current Sura, just reset to Aya 1
     setSelectedAyaIdx(1);
     // Clear progress for current Sura only
@@ -461,7 +500,14 @@ function App() {
       <main>
         <section className="review-section">
           <div className="quran-text">
-            {showCorrectAya ? (
+            {isCountingDown ? (
+              <div className="countdown-display">
+                <div className="countdown-number">{countdown > 0 ? countdown : '🎤'}</div>
+                <div className="countdown-text">
+                  {countdown > 0 ? t('getReady') : t('startReciting')}
+                </div>
+              </div>
+            ) : showCorrectAya ? (
               <span className="aya-correct" style={{ color: 'var(--color-success)' }}>
                 ✅ {aya?.text}
               </span>
@@ -509,9 +555,11 @@ function App() {
               <button 
                 className="primary-button"
                 onClick={isListening ? stopListening : startListening}
-                disabled={isProcessing}
+                disabled={isProcessing || isCountingDown}
               >
-                {isProcessing ? (
+                {isCountingDown ? (
+                  <>🕒 {countdown > 0 ? countdown : t('startNow')}</>
+                ) : isProcessing ? (
                   <>⏳ {t('processing')}... {processingProgress.ayasChecked}/{processingProgress.totalAyas}</>
                 ) : isListening ? (
                   <>🔴 {t('stopRecitation')}</>

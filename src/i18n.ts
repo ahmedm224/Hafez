@@ -12,6 +12,7 @@ const resources = {
       startRecitation: "ابدأ التلاوة",
       stopRecitation: "جاري الاستماع... اضغط لإيقاف",
       processing: "جاري المعالجة...",
+      startNow: "ابدأ الآن!",
       rewind: "البداية",
       sura: "السورة",
       aya: "الآية",
@@ -28,6 +29,8 @@ const resources = {
       // Instructions & Prompts
       reciteAya: "اتل الآية رقم {{ayaNumber}} من سورة {{suraName}}",
       ayaCompleted: "{{ayaText}}",
+      getReady: "استعد للتلاوة...",
+      startReciting: "ابدأ التلاوة الآن",
       
       // Feedback & Analysis
       recitationAnalysis: "تحليل التلاوة",
@@ -68,6 +71,7 @@ const resources = {
       startRecitation: "Start Recitation",
       stopRecitation: "Listening... Click to Stop",
       processing: "Processing...",
+      startNow: "Start Now!",
       rewind: "Beginning",
       sura: "Sura",
       aya: "Aya",
@@ -84,6 +88,8 @@ const resources = {
       // Instructions & Prompts
       reciteAya: "Recite Aya {{ayaNumber}} from Sura {{suraName}}",
       ayaCompleted: "{{ayaText}}",
+      getReady: "Get ready to recite...",
+      startReciting: "Start reciting now",
       
       // Feedback & Analysis
       recitationAnalysis: "Recitation Analysis",
