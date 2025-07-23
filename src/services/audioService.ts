@@ -91,10 +91,23 @@ export class WhisperTranscriptionService {
     try {
       console.log('📤 Sending audio for transcription, size:', audioBlob.size, 'bytes');
 
-      // Convert blob to base64 for transmission
-      const arrayBuffer = await audioBlob.arrayBuffer();
-      const base64Audio = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+      // Test the API connection first
+      try {
+        const testResponse = await fetch(`${this.baseUrl}/test-api`);
+        if (testResponse.ok) {
+          const testData = await testResponse.json();
+          console.log('🔧 API test result:', testData);
+        }
+      } catch (testError) {
+        console.warn('⚠️ API test failed:', testError);
+      }
 
+      // Convert blob to base64 for transmission using a more efficient method for large files
+      console.log('🔄 Converting audio to base64...');
+      const base64Audio = await this.blobToBase64(audioBlob);
+      console.log('✅ Base64 conversion complete, length:', base64Audio.length);
+
+      console.log('📡 Making request to transcription API...');
       const response = await fetch(`${this.baseUrl}/transcribe`, {
         method: 'POST',
         headers: {
@@ -103,15 +116,26 @@ export class WhisperTranscriptionService {
         body: base64Audio
       });
 
+      console.log('📡 Response status:', response.status);
+
       if (!response.ok) {
+        const responseText = await response.text();
+        console.error('❌ API Error Response:', responseText);
+        
         // If the main function fails, try the test function (for local development)
         if (response.status === 404) {
           console.log('Main transcribe function not found, trying test function...');
           return this.transcribeWithTestFunction(audioBlob);
         }
         
-        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-        throw new Error(`Transcription failed: ${errorData.error || response.statusText}`);
+        let errorData;
+        try {
+          errorData = JSON.parse(responseText);
+        } catch {
+          errorData = { error: responseText || 'Unknown error' };
+        }
+        
+        throw new Error(`Transcription failed (${response.status}): ${errorData.error || response.statusText}`);
       }
 
       const result = await response.json();
@@ -123,7 +147,7 @@ export class WhisperTranscriptionService {
         throw new Error('No transcription text received');
       }
     } catch (error) {
-      console.error('Transcription error:', error);
+      console.error('💥 Transcription error:', error);
       
       // Fallback to test function if main function fails
       if (error instanceof TypeError && error.message.includes('fetch')) {
@@ -133,6 +157,21 @@ export class WhisperTranscriptionService {
       
       throw error;
     }
+  }
+
+  // More efficient base64 conversion for large files
+  private async blobToBase64(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        // Remove the data URL prefix (data:audio/webm;base64,)
+        const base64 = result.split(',')[1];
+        resolve(base64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
   }
 
   private async transcribeWithTestFunction(audioBlob: Blob): Promise<string> {

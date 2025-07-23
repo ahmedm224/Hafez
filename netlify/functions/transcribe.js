@@ -30,6 +30,7 @@ exports.handler = async (event, context) => {
     // Get the API key from environment variables
     const apiKey = process.env.FIREWORKS_AI_KEY;
     if (!apiKey) {
+      console.error('FIREWORKS_AI_KEY not found in environment variables');
       return {
         statusCode: 500,
         headers: {
@@ -39,8 +40,20 @@ exports.handler = async (event, context) => {
       };
     }
 
-    // Handle direct binary audio data
-    const audioBuffer = Buffer.from(event.body, 'base64');
+    // Handle base64 encoded audio data
+    let audioBuffer;
+    try {
+      audioBuffer = Buffer.from(event.body, 'base64');
+    } catch (error) {
+      console.error('Error decoding base64 audio:', error);
+      return {
+        statusCode: 400,
+        headers: {
+          'Access-Control-Allow-Origin': '*'
+        },
+        body: JSON.stringify({ error: 'Invalid audio data format' })
+      };
+    }
     
     if (!audioBuffer || audioBuffer.length === 0) {
       return {
@@ -51,6 +64,8 @@ exports.handler = async (event, context) => {
         body: JSON.stringify({ error: 'No audio data provided' })
       };
     }
+
+    console.log('Processing audio, size:', audioBuffer.length, 'bytes');
 
     // Create form data for Fireworks AI
     const formData = new FormData();
@@ -64,7 +79,7 @@ exports.handler = async (event, context) => {
     formData.append('vad_model', 'silero');
     formData.append('language', 'ar'); // Arabic language
 
-    console.log('Sending audio to Fireworks AI, size:', audioBuffer.length, 'bytes');
+    console.log('Sending audio to Fireworks AI...');
 
     // Make request to Fireworks AI
     const response = await fetch('https://audio-turbo.us-virginia-1.direct.fireworks.ai/v1/audio/transcriptions', {
@@ -75,6 +90,8 @@ exports.handler = async (event, context) => {
       },
       body: formData
     });
+
+    console.log('Fireworks AI response status:', response.status);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -89,7 +106,7 @@ exports.handler = async (event, context) => {
     }
 
     const result = await response.json();
-    console.log('Transcription result:', result);
+    console.log('Transcription successful, text length:', result.text?.length || 0);
     
     return {
       statusCode: 200,
@@ -113,73 +130,3 @@ exports.handler = async (event, context) => {
     };
   }
 };
-
-// Simple multipart parser for audio data
-function extractAudioFromMultipart(buffer, boundary) {
-  try {
-    const boundaryBuffer = Buffer.from('--' + boundary);
-    const parts = [];
-    let start = 0;
-    
-    while (true) {
-      const boundaryIndex = buffer.indexOf(boundaryBuffer, start);
-      if (boundaryIndex === -1) break;
-      
-      if (start > 0) {
-        parts.push(buffer.slice(start, boundaryIndex));
-      }
-      start = boundaryIndex + boundaryBuffer.length;
-    }
-    
-    // Find the part containing audio data
-    for (const part of parts) {
-      const headerEnd = part.indexOf('\r\n\r\n');
-      if (headerEnd === -1) continue;
-      
-      const headers = part.slice(0, headerEnd).toString();
-      if (headers.includes('Content-Type: audio/') || headers.includes('filename=')) {
-        return part.slice(headerEnd + 4);
-      }
-    }
-    
-    return null;
-  } catch (error) {
-    console.error('Error parsing multipart data:', error);
-    return null;
-  }
-}
-
-// Simple multipart parser for audio data
-function extractAudioFromMultipart(buffer, boundary) {
-  try {
-    const boundaryBuffer = Buffer.from('--' + boundary);
-    const parts = [];
-    let start = 0;
-    
-    while (true) {
-      const boundaryIndex = buffer.indexOf(boundaryBuffer, start);
-      if (boundaryIndex === -1) break;
-      
-      if (start > 0) {
-        parts.push(buffer.slice(start, boundaryIndex));
-      }
-      start = boundaryIndex + boundaryBuffer.length;
-    }
-    
-    // Find the part containing audio data
-    for (const part of parts) {
-      const headerEnd = part.indexOf('\r\n\r\n');
-      if (headerEnd === -1) continue;
-      
-      const headers = part.slice(0, headerEnd).toString();
-      if (headers.includes('Content-Type: audio/') || headers.includes('filename=')) {
-        return part.slice(headerEnd + 4);
-      }
-    }
-    
-    return null;
-  } catch (error) {
-    console.error('Error parsing multipart data:', error);
-    return null;
-  }
-}
