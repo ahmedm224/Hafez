@@ -389,21 +389,44 @@ function App() {
     console.log('Expected words:', expectedWords.length);
     console.log('Recited words:', recitedWords.length);
     
-    // Find the longest consecutive match from the beginning
+    // Debug: Log the actual words being compared
+    console.log('🔍 Expected words:', expectedWords.slice(0, 5), '...');
+    console.log('🔍 Recited words:', recitedWords.slice(0, 5), '...');
+    
+    // Enhanced matching with Arabic-specific logic
     let longestMatch = 0;
     for (let i = 0; i < Math.min(recitedWords.length, expectedWords.length); i++) {
-      if (recitedWords[i] === expectedWords[i]) {
+      const recitedWord = recitedWords[i];
+      const expectedWord = expectedWords[i];
+      
+      // Debug: Show each comparison
+      console.log(`🔍 Comparing [${i}]: "${recitedWord}" vs "${expectedWord}"`);
+      
+      if (recitedWord === expectedWord) {
         longestMatch = i + 1;
+        console.log(`✅ Exact match at position ${i}`);
       } else {
-        // Allow for one small mistake and continue
-        if (i + 1 < expectedWords.length && i + 1 < recitedWords.length) {
-          if (recitedWords[i + 1] === expectedWords[i + 1]) {
-            longestMatch = i + 2;
-            i++; // Skip the mismatched word
-            continue;
+        // Try enhanced Arabic matching
+        if (enhancedArabicMatch(recitedWord, expectedWord)) {
+          longestMatch = i + 1;
+          console.log(`✅ Enhanced match at position ${i}: "${recitedWord}" ≈ "${expectedWord}"`);
+        } else {
+          // Allow for one small mistake and continue
+          if (i + 1 < expectedWords.length && i + 1 < recitedWords.length) {
+            const nextRecited = recitedWords[i + 1];
+            const nextExpected = expectedWords[i + 1];
+            console.log(`🔍 Trying skip: "${nextRecited}" vs "${nextExpected}"`);
+            
+            if (nextRecited === nextExpected || enhancedArabicMatch(nextRecited, nextExpected)) {
+              longestMatch = i + 2;
+              i++; // Skip the mismatched word
+              console.log(`✅ Skip match at position ${i}`);
+              continue;
+            }
           }
+          console.log(`❌ No match at position ${i}, stopping`);
+          break;
         }
-        break;
       }
     }
     
@@ -491,6 +514,76 @@ function App() {
     console.log(`✅ Processing complete. Completed Ayas: ${completedAyas.join(', ')}`);
     
     return { completedAyas, results };
+  };
+
+  const enhancedArabicMatch = (word1: string, word2: string): boolean => {
+    if (!word1 || !word2) return false;
+    
+    // Additional Arabic normalization for comparison
+    const deepNormalize = (str: string) => str
+      .replace(/[\u064B-\u0652]/g, '') // Remove all diacritics
+      .replace(/[\u200C\u200D\u200E\u200F]/g, '') // Remove zero-width characters
+      .replace(/أ|إ|آ/g, 'ا') // Normalize alif variations
+      .replace(/ة/g, 'ه') // Ta marbuta to ha
+      .replace(/ي/g, 'ى') // Ya variations
+      .replace(/ک/g, 'ك') // Farsi kaf to Arabic kaf
+      .replace(/ؤ/g, 'و') // Hamza on waw
+      .replace(/ئ/g, 'ي') // Hamza on ya
+      .replace(/\s+/g, '') // Remove all spaces for this comparison
+      .trim()
+      .toLowerCase();
+    
+    const norm1 = deepNormalize(word1);
+    const norm2 = deepNormalize(word2);
+    
+    // Exact match after deep normalization
+    if (norm1 === norm2) return true;
+    
+    // Similarity check - allow for minor differences
+    if (norm1.length > 2 && norm2.length > 2) {
+      const similarity = calculateSimilarity(norm1, norm2);
+      return similarity >= 0.8; // 80% similarity threshold
+    }
+    
+    return false;
+  };
+
+  const calculateSimilarity = (str1: string, str2: string): number => {
+    const longer = str1.length > str2.length ? str1 : str2;
+    const shorter = str1.length > str2.length ? str2 : str1;
+    
+    if (longer.length === 0) return 1.0;
+    
+    const editDistance = levenshteinDistance(longer, shorter);
+    return (longer.length - editDistance) / longer.length;
+  };
+
+  const levenshteinDistance = (str1: string, str2: string): number => {
+    const matrix = [];
+    
+    for (let i = 0; i <= str2.length; i++) {
+      matrix[i] = [i];
+    }
+    
+    for (let j = 0; j <= str1.length; j++) {
+      matrix[0][j] = j;
+    }
+    
+    for (let i = 1; i <= str2.length; i++) {
+      for (let j = 1; j <= str1.length; j++) {
+        if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
+          matrix[i][j] = matrix[i - 1][j - 1];
+        } else {
+          matrix[i][j] = Math.min(
+            matrix[i - 1][j - 1] + 1, // substitution
+            matrix[i][j - 1] + 1,     // insertion
+            matrix[i - 1][j] + 1      // deletion
+          );
+        }
+      }
+    }
+    
+    return matrix[str2.length][str1.length];
   };
 
   return (
