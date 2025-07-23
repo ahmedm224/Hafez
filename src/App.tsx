@@ -4,6 +4,7 @@ import { loadQuran } from './quranParser';
 import type { QuranData } from './quranParser';
 import { Header } from './components/Header';
 import { useTheme } from './hooks/useTheme';
+import { audioRecorder, transcriptionService } from './services/audioService';
 
 function App() {
   const { t, i18n } = useTranslation();
@@ -12,7 +13,8 @@ function App() {
   const [quran, setQuran] = useState<QuranData | null>(null);
   const [selectedSuraIdx, setSelectedSuraIdx] = useState<number>(1);
   const [selectedAyaIdx, setSelectedAyaIdx] = useState<number>(1);
-  const [isListening, setIsListening] = useState<boolean>(false);
+  const [isRecording, setIsRecording] = useState<boolean>(false);
+  const [isTranscribing, setIsTranscribing] = useState<boolean>(false);
   const [recognizedText, setRecognizedText] = useState<string>('');
   const [completed, setCompleted] = useState<{ [key: string]: boolean }>({});
   const [currentRecitation, setCurrentRecitation] = useState<string>('');
@@ -22,7 +24,6 @@ function App() {
   const [lastCorrectAya, setLastCorrectAya] = useState<number>(1);
   const [showFeedback, setShowFeedback] = useState(false);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
-  const [isRecognitionReady, setIsRecognitionReady] = useState<boolean>(false);
   const [processingProgress, setProcessingProgress] = useState<{
     ayasChecked: number;
     totalAyas: number;
@@ -32,7 +33,6 @@ function App() {
   const [countdown, setCountdown] = useState<number>(0);
   const [isCountingDown, setIsCountingDown] = useState<boolean>(false);
   
-  const recognitionRef = useRef<any>(null);
   const processingTimeoutRef = useRef<any>(null);
   const countdownIntervalRef = useRef<any>(null);
 
@@ -54,9 +54,7 @@ function App() {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
+      audioRecorder.cleanup();
       if (processingTimeoutRef.current) {
         clearTimeout(processingTimeoutRef.current);
       }
@@ -75,152 +73,70 @@ function App() {
   const overallProgress = quran ? 
     (Object.keys(completed).length / quran.suras.reduce((total, s) => total + s.ayas.length, 0)) * 100 : 0;
 
-  const startListening = () => {
+  const startRecording = async () => {
     if (!navigator.onLine) {
       alert(t('internetRequired'));
       return;
     }
 
-    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-      alert(t('microphoneNotSupported'));
-      return;
-    }
-
-    // Start with longer countdown to account for recognition startup time
-    setIsCountingDown(true);
-    setIsRecognitionReady(false); // Reset ready state
-    setCountdown(5); // Increased from 3 to 5 seconds
-    
-    countdownIntervalRef.current = setInterval(() => {
-      setCountdown(prev => {
-        if (prev <= 1) {
-          clearInterval(countdownIntervalRef.current);
-          setIsCountingDown(false);
-          // Start actual recognition after countdown
-          initializeRecognition();
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-  };
-
-  const initializeRecognition = () => {
-    const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
-    const recognition = new SpeechRecognition();
-    
-    recognition.lang = 'ar-SA';
-    recognition.interimResults = true;
-    recognition.continuous = true;
-    recognition.maxAlternatives = 1;
-    
-    recognitionRef.current = recognition;
-
-    recognition.onstart = () => {
-      console.log('🎤 Voice recognition started after countdown');
-      setIsListening(true);
-      setIsProcessing(false);
-      setCurrentRecitation('');
-      setRecognizedText('');
-      
-      // Add a small additional delay to ensure recognition is truly ready
-      setTimeout(() => {
-        console.log('🎯 Recognition is now fully ready - user can start reciting');
-        setIsRecognitionReady(true); // Signal that recognition is ready
-      }, 500); // Extra 500ms to ensure recognition is capturing
-    };
-
-    recognition.onresult = (event: any) => {
-      console.log('Voice recognition result:', event);
-      let interimTranscript = '';
-      let finalTranscript = '';
-      
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalTranscript += transcript;
-        } else {
-          interimTranscript += transcript;
-        }
-      }
-      
-      if (finalTranscript) {
-        const newRecitation = currentRecitation + ' ' + finalTranscript;
-        setCurrentRecitation(newRecitation);
-        
-        // Process the recitation if we're actively listening (but don't advance automatically during listening)
-        if (isListening) {
-                     // Just update progress, don't advance during active listening
-           try {
-             checkMultiAyaRecitation(newRecitation);
-             // Progress is updated inside checkMultiAyaRecitation, no need to advance here
-           } catch (error) {
-             console.error('Error during live processing:', error);
-           }
-        }
-      }
-      
-      const displayText = currentRecitation + ' ' + interimTranscript;
-      setRecognizedText(displayText);
-      
-
-    };
-
-    recognition.onerror = (event: any) => {
-      console.error('Voice recognition error:', event.error);
-      let errorMessage = t('startFailed');
-      
-      switch (event.error) {
-        case 'not-allowed':
-          errorMessage = t('microphonePermission');
-          break;
-        case 'no-speech':
-          // Don't show error for no-speech, it's normal
-          return;
-        case 'network':
-          errorMessage = t('networkError');
-          break;
-        case 'service-not-allowed':
-          errorMessage = t('serviceUnavailable');
-          break;
-      }
-      
-      alert(errorMessage);
-      setIsListening(false);
-      setIsProcessing(false);
-    };
-
-    recognition.onend = () => {
-      console.log('Voice recognition ended, isListening:', isListening);
-      
-      // Only restart if we're still supposed to be listening AND we still have a valid recognition object
-      if (isListening && recognitionRef.current) {
-        console.log('Attempting to restart recognition...');
-        setTimeout(() => {
-          if (recognitionRef.current && isListening) {
-            try {
-              recognitionRef.current.start();
-              console.log('Recognition restarted successfully');
-            } catch (error) {
-              console.error('Failed to restart recognition:', error);
-              setIsListening(false);
-            }
-          }
-        }, 100);
-      } else {
-        console.log('Recognition ended - not restarting');
-      }
-    };
-
     try {
-      recognition.start();
+      // Start with countdown
+      setIsCountingDown(true);
+      setCountdown(3);
+      
+      countdownIntervalRef.current = setInterval(() => {
+        setCountdown(prev => {
+          if (prev <= 1) {
+            clearInterval(countdownIntervalRef.current);
+            setIsCountingDown(false);
+            // Start actual recording after countdown
+            startActualRecording();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
     } catch (error) {
-      console.error('Failed to start recognition:', error);
+      console.error('Error starting recording:', error);
       alert(t('startFailed'));
     }
   };
 
-  const stopListening = () => {
+  const startActualRecording = async () => {
+    try {
+      await audioRecorder.startRecording();
+      setIsRecording(true);
+      setCurrentRecitation('');
+      setRecognizedText('');
+      console.log('🎤 Audio recording started');
+    } catch (error) {
+      console.error('Failed to start recording:', error);
+      alert(error instanceof Error ? error.message : t('startFailed'));
+    }
+  };
+
+  const handleAyaAdvancement = (nextAyaIdx: number) => {
+    setShowCorrectAya(true);
+    setTimeout(() => {
+      if (sura && nextAyaIdx <= sura.ayas.length) {
+        setSelectedAyaIdx(nextAyaIdx);
+        console.log('Moving to Aya:', nextAyaIdx);
+      } else if (quran && selectedSuraIdx < quran.suras.length) {
+        setSelectedSuraIdx(selectedSuraIdx + 1);
+        setSelectedAyaIdx(1);
+      } else {
+        setIsRecording(false);
+        audioRecorder.cleanup();
+        alert(t('congratulations'));
+      }
+      setCurrentRecitation('');
+      setRecognizedText('');
+      setAyaProgress(0);
+      setShowCorrectAya(false);
+    }, 800); // Faster response
+  };
+
+  const stopRecording = async () => {
     // Clear countdown if it's running
     if (countdownIntervalRef.current) {
       clearInterval(countdownIntervalRef.current);
@@ -228,40 +144,50 @@ function App() {
       setCountdown(0);
     }
     
-    setIsRecognitionReady(false); // Reset ready state
-    
-    if (recognitionRef.current) {
-      console.log('🔴 Stopping recognition immediately...');
-      setIsListening(false);
+    if (audioRecorder.isRecording()) {
+      console.log('🔴 Stopping recording and transcribing...');
+      setIsRecording(false);
+      setIsTranscribing(true);
       
-      // Stop recognition immediately
       try {
-        recognitionRef.current.stop();
-        recognitionRef.current = null; // Clear the reference to prevent restart
+        // Stop recording and get audio blob
+        const audioBlob = await audioRecorder.stopRecording();
+        
+        // Transcribe using Whisper
+        const transcribedText = await transcriptionService.transcribeAudio(audioBlob);
+        
+        console.log('📝 Transcribed text:', transcribedText);
+        setCurrentRecitation(transcribedText);
+        setRecognizedText(transcribedText);
+        setIsTranscribing(false);
+        
+        // Process the transcription
+        if (transcribedText.trim()) {
+          setIsProcessing(true);
+          processRecitationImmediate(transcribedText);
+        }
       } catch (error) {
-        console.error('Error stopping recognition:', error);
-      }
-      
-      // Process what we have immediately
-      if (currentRecitation.trim()) {
-        setIsProcessing(true);
-        processRecitationImmediate();
+        console.error('Error during transcription:', error);
+        setIsTranscribing(false);
+        alert(t('transcriptionFailed') || 'Transcription failed. Please try again.');
       }
     }
   };
 
-  const processRecitationImmediate = () => {
-    if (!currentRecitation.trim()) {
+  const processRecitationImmediate = (recitationText?: string) => {
+    const textToProcess = recitationText || currentRecitation.trim();
+    
+    if (!textToProcess) {
       setIsProcessing(false);
       return;
     }
 
-    console.log('🔄 Processing recitation:', currentRecitation);
+    console.log('🔄 Processing recitation:', textToProcess);
     
     // Use a simple timeout to ensure it always completes
     setTimeout(() => {
       try {
-        const result = checkMultiAyaRecitation(currentRecitation);
+        const result = checkMultiAyaRecitation(textToProcess);
         
         // Always show results, even if not perfect
         setIsProcessing(false);
@@ -280,29 +206,6 @@ function App() {
     }, 200); // Very quick processing
   };
 
-  const handleAyaAdvancement = (nextAyaIdx: number) => {
-    setShowCorrectAya(true);
-    setTimeout(() => {
-      if (sura && nextAyaIdx <= sura.ayas.length) {
-        setSelectedAyaIdx(nextAyaIdx);
-        console.log('Moving to Aya:', nextAyaIdx);
-      } else if (quran && selectedSuraIdx < quran.suras.length) {
-        setSelectedSuraIdx(selectedSuraIdx + 1);
-        setSelectedAyaIdx(1);
-      } else {
-        setIsListening(false);
-        if (recognitionRef.current) {
-          recognitionRef.current.stop();
-        }
-        alert(t('congratulations'));
-      }
-      setCurrentRecitation('');
-      setRecognizedText('');
-      setAyaProgress(0);
-      setShowCorrectAya(false);
-    }, 800); // Faster response
-  };
-
   const rewindToBeginning = () => {
     // Clear countdown if it's running
     if (countdownIntervalRef.current) {
@@ -310,8 +213,6 @@ function App() {
       setIsCountingDown(false);
       setCountdown(0);
     }
-    
-    setIsRecognitionReady(false); // Reset recognition ready state
     
     // Keep current Sura, just reset to Aya 1
     setSelectedAyaIdx(1);
@@ -608,18 +509,18 @@ function App() {
                   {countdown > 0 ? t('getReady') : t('startReciting')}
                 </div>
               </div>
-            ) : isListening && !isRecognitionReady ? (
+            ) : isRecording ? (
+              <div className="countdown-display">
+                <div className="countdown-number">🎤</div>
+                <div className="countdown-text">
+                  {t('recording')} - {t('speakNow')}!
+                </div>
+              </div>
+            ) : isTranscribing ? (
               <div className="countdown-display">
                 <div className="countdown-number">⏳</div>
                 <div className="countdown-text">
-                  {t('preparingMicrophone')}...
-                </div>
-              </div>
-            ) : isListening && isRecognitionReady && !recognizedText ? (
-              <div className="countdown-display">
-                <div className="countdown-number">🎯</div>
-                <div className="countdown-text">
-                  {t('startReciting')} - {t('listening')}!
+                  {t('transcribing')}...
                 </div>
               </div>
             ) : showCorrectAya ? (
@@ -643,7 +544,7 @@ function App() {
                   setSelectedSuraIdx(idx);
                   setSelectedAyaIdx(1);
                 }}
-                disabled={isListening}
+                disabled={isRecording || isTranscribing}
               >
                 {quran?.suras.map(s => (
                   <option key={s.index} value={s.index}>{s.name}</option>
@@ -656,7 +557,7 @@ function App() {
               <select
                 value={selectedAyaIdx}
                 onChange={e => setSelectedAyaIdx(Number(e.target.value))}
-                disabled={isListening}
+                disabled={isRecording || isTranscribing}
               >
                 {sura?.ayas.map(a => (
                   <option key={a.index} value={a.index}>{a.index}</option>
@@ -669,26 +570,26 @@ function App() {
             <div className="voice-button-group">
               <button 
                 className="primary-button"
-                onClick={isListening ? stopListening : startListening}
-                disabled={isProcessing || isCountingDown}
+                onClick={isRecording ? stopRecording : startRecording}
+                disabled={isProcessing || isCountingDown || isTranscribing}
               >
                 {isCountingDown ? (
                   <>🕒 {countdown > 0 ? `${countdown}...` : t('startNow')}</>
-                ) : isListening && !isRecognitionReady ? (
-                  <>⏳ {t('preparingMicrophone')}...</>
-                ) : isListening && isRecognitionReady ? (
-                  <>🔴 {t('stopRecitation')} (🎯 {t('listening')})</>
+                ) : isRecording ? (
+                  <>🔴 {t('stopRecording')}</>
+                ) : isTranscribing ? (
+                  <>⏳ {t('transcribing')}...</>
                 ) : isProcessing ? (
                   <>⏳ {t('processing')}... {processingProgress.ayasChecked}/{processingProgress.totalAyas}</>
                 ) : (
-                  <>🎤 {t('startRecitation')}</>
+                  <>🎤 {t('startRecording')}</>
                 )}
               </button>
               
               <button 
                 className="secondary-button"
                 onClick={rewindToBeginning} 
-                disabled={isListening}
+                disabled={isRecording || isTranscribing}
                 aria-label={t('rewind')}
                 title={t('rewind')}
               >
@@ -720,7 +621,7 @@ function App() {
                 <div className="recitation-text">
                   {recognizedText}
                 </div>
-                {isListening && ayaProgress > 0 && (
+                {isRecording && ayaProgress > 0 && (
                   <div className="progress-container">
                     <span className="progress-label">
                       {t('ayaProgress')}: {Math.round(ayaProgress)}%
