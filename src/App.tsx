@@ -22,7 +22,6 @@ function App() {
   const [lastCorrectAya, setLastCorrectAya] = useState<number>(1);
   const [showFeedback, setShowFeedback] = useState(false);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
-  const [pendingRecitation, setPendingRecitation] = useState<string>('');
   const [processingProgress, setProcessingProgress] = useState<{
     ayasChecked: number;
     totalAyas: number;
@@ -119,10 +118,8 @@ function App() {
         const newRecitation = currentRecitation + ' ' + finalTranscript;
         setCurrentRecitation(newRecitation);
         
-        // If we're no longer listening but still processing, store for later processing
-        if (!isListening && isProcessing) {
-          setPendingRecitation(prev => prev + ' ' + finalTranscript);
-        } else {
+        // Process the recitation if we're actively listening
+        if (isListening) {
           const result = checkCurrentAyaSimple(newRecitation);
           if (result?.shouldAdvance) {
             handleAyaAdvancement(result.nextAyaIdx);
@@ -133,10 +130,7 @@ function App() {
       const displayText = currentRecitation + ' ' + interimTranscript;
       setRecognizedText(displayText);
       
-      // Update pending recitation if processing after stop
-      if (!isListening && isProcessing && interimTranscript) {
-        setPendingRecitation(displayText);
-      }
+
     };
 
     recognition.onerror = (event: any) => {
@@ -272,7 +266,6 @@ function App() {
     setShowCorrectAya(false);
     setShowFeedback(false);
     setIsProcessing(false);
-    setPendingRecitation('');
     setProcessingProgress({ ayasChecked: 0, totalAyas: 0, currentlyChecking: 0, results: [] });
     
     // Clear any pending processing timeout
