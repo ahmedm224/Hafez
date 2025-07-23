@@ -22,6 +22,8 @@ const resources = {
       overallProgress: "التقدم الكلي",
       currentRecitation: "التلاوة الجارية",
       ayaProgress: "تقدم الآية الحالية",
+      processingStatus: "حالة المعالجة",
+      currentlyChecking: "قيد الفحص",
       
       // Instructions & Prompts
       reciteAya: "اتل الآية رقم {{ayaNumber}} من سورة {{suraName}}",
@@ -76,6 +78,8 @@ const resources = {
       overallProgress: "Overall Progress",
       currentRecitation: "Current Recitation",
       ayaProgress: "Current Aya Progress",
+      processingStatus: "Processing Status",
+      currentlyChecking: "Currently Checking",
       
       // Instructions & Prompts
       reciteAya: "Recite Aya {{ayaNumber}} from Sura {{suraName}}",

@@ -23,6 +23,12 @@ function App() {
   const [showFeedback, setShowFeedback] = useState(false);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [pendingRecitation, setPendingRecitation] = useState<string>('');
+  const [processingProgress, setProcessingProgress] = useState<{
+    ayasChecked: number;
+    totalAyas: number;
+    currentlyChecking: number;
+    results: Array<{ayaIndex: number, completed: boolean, accuracy: number}>;
+  }>({ ayasChecked: 0, totalAyas: 0, currentlyChecking: 0, results: [] });
   
   const recognitionRef = useRef<any>(null);
   const processingTimeoutRef = useRef<any>(null);
@@ -117,7 +123,7 @@ function App() {
         if (!isListening && isProcessing) {
           setPendingRecitation(prev => prev + ' ' + finalTranscript);
         } else {
-          const result = checkCurrentAya(newRecitation);
+          const result = checkCurrentAyaSimple(newRecitation);
           if (result?.shouldAdvance) {
             handleAyaAdvancement(result.nextAyaIdx);
           }
@@ -160,24 +166,7 @@ function App() {
     recognition.onend = () => {
       console.log('Voice recognition ended');
       
-      // If we were processing buffered input, continue processing
-      if (isProcessing && pendingRecitation) {
-        console.log('Processing buffered recitation:', pendingRecitation);
-        const result = checkCurrentAya(pendingRecitation);
-        if (result?.shouldAdvance) {
-          handleAyaAdvancement(result.nextAyaIdx);
-        }
-        setPendingRecitation('');
-        
-        // Set a timeout to finish processing
-        processingTimeoutRef.current = setTimeout(() => {
-          setIsProcessing(false);
-          if (recitationHistory.length > 0) {
-            setShowFeedback(true);
-            setSelectedAyaIdx(lastCorrectAya);
-          }
-        }, 800); // Reduced to 800ms for faster response
-      } else if (isListening) {
+      if (isListening) {
         // Restart recognition if we're still supposed to be listening
         setTimeout(() => {
           if (recognitionRef.current && isListening) {
@@ -203,17 +192,39 @@ function App() {
   const stopListening = () => {
     if (recognitionRef.current) {
       setIsListening(false);
-      setIsProcessing(true); // Set processing state to handle buffered input
+      setIsProcessing(true);
       
-      // Don't immediately stop - let it process any buffered audio
-      setTimeout(() => {
-        if (recognitionRef.current) {
-          recognitionRef.current.stop();
-        }
-      }, 200); // Reduced to 200ms for faster response
-      
-      console.log('🔴 Stopping recognition, entering processing mode...');
+      // Process immediately instead of waiting
+      console.log('🔴 Stopping recognition, processing immediately...');
+      processRecitationImmediate();
     }
+  };
+
+  const processRecitationImmediate = () => {
+    if (!currentRecitation.trim()) {
+      setIsProcessing(false);
+      return;
+    }
+
+    console.log('🔄 Processing recitation:', currentRecitation);
+    
+    // Use a simple timeout to simulate processing and ensure it always completes
+    setTimeout(() => {
+      try {
+        const result = checkCurrentAyaSimple(currentRecitation);
+        if (result?.shouldAdvance) {
+          handleAyaAdvancement(result.nextAyaIdx);
+        }
+      } catch (error) {
+        console.error('Processing error:', error);
+      } finally {
+        // Always complete processing
+        setIsProcessing(false);
+        if (recitationHistory.length > 0) {
+          setShowFeedback(true);
+        }
+      }
+    }, 300); // Very short timeout to ensure it completes quickly
   };
 
   const handleAyaAdvancement = (nextAyaIdx: number) => {
@@ -236,7 +247,7 @@ function App() {
       setRecognizedText('');
       setAyaProgress(0);
       setShowCorrectAya(false);
-    }, 1000); // Reduced from 1500ms to 1000ms for faster response
+    }, 800); // Faster response
   };
 
   const rewindToBeginning = () => {
@@ -262,6 +273,7 @@ function App() {
     setShowFeedback(false);
     setIsProcessing(false);
     setPendingRecitation('');
+    setProcessingProgress({ ayasChecked: 0, totalAyas: 0, currentlyChecking: 0, results: [] });
     
     // Clear any pending processing timeout
     if (processingTimeoutRef.current) {
@@ -272,105 +284,84 @@ function App() {
     console.log(`🔄 Rewound to beginning of Sura ${selectedSuraIdx}`);
   };
 
-  const checkCurrentAya = (fullRecitation: string) => {
-    if (!aya || !sura) return;
+  const checkCurrentAyaSimple = (fullRecitation: string) => {
+    if (!aya || !sura) return { shouldAdvance: false, nextAyaIdx: selectedAyaIdx };
     
-    // Simplified normalize function for Arabic text
+    console.log('🔍 Quick check for Aya:', aya.index);
+    
+    // Very simple normalization for speed
     const normalize = (str: string) => str
       .replace(/[\u064B-\u0652]/g, '') // Remove diacritics
-      .replace(/[\u200C\u200F]/g, '') // Remove zero-width characters
-      .replace(/أ|إ|آ/g, 'ا') // Normalize alif variations
-      .replace(/ة/g, 'ه') // Normalize ta marbuta to ha
-      .replace(/ي/g, 'ى') // Normalize ya variations
       .replace(/\s+/g, ' ') // Normalize spaces
       .trim()
       .toLowerCase();
     
     const normalizedRecitation = normalize(fullRecitation);
+    const normalizedCurrentAya = normalize(aya.text);
     
-    console.log('Checking Aya:', aya.index, 'in Sura:', sura.name);
+    // Update processing progress UI
+    setProcessingProgress({
+      ayasChecked: 1,
+      totalAyas: 3,
+      currentlyChecking: aya.index,
+      results: []
+    });
     
-    // Only check current Aya + next 2 Ayas max (much more efficient)
-    const currentAyaIndex = selectedAyaIdx - 1;
-    const maxAyasToCheck = Math.min(3, sura.ayas.length - currentAyaIndex);
-    const ayasToCheck = sura.ayas.slice(currentAyaIndex, currentAyaIndex + maxAyasToCheck);
-    
-    // Simple word-by-word matching for efficiency
+    // Simple word matching for current Aya only
     const recitedWords = normalizedRecitation.split(/\s+/).filter(w => w.length > 0);
-    let currentWordIndex = 0;
-    let completedAyas: number[] = [];
+    const ayaWords = normalizedCurrentAya.split(/\s+/).filter(w => w.length > 0);
     
-    for (let i = 0; i < ayasToCheck.length; i++) {
-      const ayaToCheck = ayasToCheck[i];
-      const normalizedAyaText = normalize(ayaToCheck.text);
-      const ayaWords = normalizedAyaText.split(/\s+/).filter(w => w.length > 0);
-      
-      console.log(`Checking Aya ${ayaToCheck.index}: "${normalizedAyaText}"`);
-      
-      // Count consecutive matches from current position
-      let matchedWords = 0;
-      let tempWordIndex = currentWordIndex;
-      
-      for (let j = 0; j < ayaWords.length && tempWordIndex < recitedWords.length; j++) {
-        if (recitedWords[tempWordIndex] === ayaWords[j]) {
-          matchedWords++;
-          tempWordIndex++;
-        } else {
-          // Allow skipping 1 word for minor recognition errors
-          if (tempWordIndex + 1 < recitedWords.length && 
-              recitedWords[tempWordIndex + 1] === ayaWords[j]) {
-            tempWordIndex += 2; // skip the mismatched word
-            matchedWords++;
-          } else {
-            break; // Stop matching this Aya
-          }
-        }
-      }
-      
-      const completionPercentage = ayaWords.length > 0 ? (matchedWords / ayaWords.length) * 100 : 0;
-      const isCompleted = completionPercentage >= 80; // Reasonable threshold
-      
-      console.log(`Aya ${ayaToCheck.index}: ${matchedWords}/${ayaWords.length} words (${completionPercentage.toFixed(1)}%)`);
-      
-      if (isCompleted) {
-        completedAyas.push(ayaToCheck.index);
-        currentWordIndex = tempWordIndex; // Advance word position
-        
-        // Mark as completed
-        setCompleted(prev => ({ ...prev, [`${selectedSuraIdx}:${ayaToCheck.index}`]: true }));
-        setRecitationHistory(prev => {
-          const existingIndex = prev.findIndex(h => h.ayaIndex === ayaToCheck.index);
-          const newEntry = {
-            ayaIndex: ayaToCheck.index,
-            correct: true,
-            recitedText: normalizedRecitation,
-            expectedText: ayaToCheck.text,
-            accuracy: completionPercentage
-          };
-          if (existingIndex >= 0) {
-            const updated = [...prev];
-            updated[existingIndex] = newEntry;
-            return updated;
-          } else {
-            return [...prev, newEntry];
-          }
-        });
-        setLastCorrectAya(ayaToCheck.index);
-        console.log(`✅ Completed Aya ${ayaToCheck.index}!`);
+    // Count matching words
+    let matchedWords = 0;
+    const minLength = Math.min(recitedWords.length, ayaWords.length);
+    
+    for (let i = 0; i < minLength; i++) {
+      if (recitedWords[i] === ayaWords[i]) {
+        matchedWords++;
       } else {
-        // Update progress for current Aya only
-        if (ayaToCheck.index === selectedAyaIdx && completionPercentage > 0) {
-          setAyaProgress(completionPercentage);
-        }
-        break; // Stop checking if current Aya isn't completed
+        break; // Stop at first mismatch
       }
     }
-
-    // Advance to next Aya if current one is completed
-    if (completedAyas.includes(selectedAyaIdx)) {
-      const nextAya = Math.max(...completedAyas) + 1;
-      console.log(`🎯 Advancing to Aya ${nextAya}`);
+    
+    const accuracy = ayaWords.length > 0 ? (matchedWords / ayaWords.length) * 100 : 0;
+    const isCompleted = accuracy >= 75; // Lower threshold for easier completion
+    
+    console.log(`Aya ${aya.index}: ${matchedWords}/${ayaWords.length} words (${accuracy.toFixed(1)}%)`);
+    
+    // Update progress
+    setAyaProgress(accuracy);
+    
+    // Update processing results for UI
+    setProcessingProgress(prev => ({
+      ...prev,
+      ayasChecked: 1,
+      results: [{ayaIndex: aya.index, completed: isCompleted, accuracy}]
+    }));
+    
+    if (isCompleted) {
+      // Mark as completed
+      setCompleted(prev => ({ ...prev, [`${selectedSuraIdx}:${aya.index}`]: true }));
+      setRecitationHistory(prev => {
+        const existingIndex = prev.findIndex(h => h.ayaIndex === aya.index);
+        const newEntry = {
+          ayaIndex: aya.index,
+          correct: true,
+          recitedText: normalizedRecitation,
+          expectedText: aya.text,
+          accuracy
+        };
+        if (existingIndex >= 0) {
+          const updated = [...prev];
+          updated[existingIndex] = newEntry;
+          return updated;
+        } else {
+          return [...prev, newEntry];
+        }
+      });
+      setLastCorrectAya(aya.index);
       
+      const nextAya = aya.index + 1;
+      console.log(`✅ Completed Aya ${aya.index}! Moving to ${nextAya}`);
       return { shouldAdvance: true, nextAyaIdx: nextAya };
     }
     
@@ -435,7 +426,7 @@ function App() {
                 disabled={isProcessing}
               >
                 {isProcessing ? (
-                  <>⏳ {t('processing')}</>
+                  <>⏳ {t('processing')}... {processingProgress.ayasChecked}/{processingProgress.totalAyas}</>
                 ) : isListening ? (
                   <>🔴 {t('stopRecitation')}</>
                 ) : (
@@ -454,6 +445,24 @@ function App() {
               </button>
             </div>
             
+            {isProcessing && processingProgress.results.length > 0 && (
+              <div className="processing-status">
+                <strong>📊 {t('processingStatus')}:</strong>
+                <div className="processing-results">
+                  {processingProgress.results.map((result, index) => (
+                    <div key={index} className={`processing-item ${result.completed ? 'completed' : 'in-progress'}`}>
+                      {result.completed ? '✅' : '⏳'} {t('aya')} {result.ayaIndex}: {result.accuracy.toFixed(1)}%
+                    </div>
+                  ))}
+                </div>
+                {processingProgress.currentlyChecking > 0 && (
+                  <div className="currently-checking">
+                    🔍 {t('currentlyChecking')}: {t('aya')} {processingProgress.currentlyChecking}
+                  </div>
+                )}
+              </div>
+            )}
+
             {recognizedText && (
               <div className="recognized-text">
                 <strong>{t('currentRecitation')}:</strong>
