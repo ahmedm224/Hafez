@@ -63,6 +63,23 @@ const resources = {
       lightTheme: "فاتح",
       darkTheme: "داكن",
       
+      // New Advanced Features
+      selectSura: "اختر السورة",
+      selectAya: "اختر الآية",
+      currentAya: "الآية الحالية",
+      rewindToBeginning: "العودة للبداية",
+      skip: "تخطي",
+      matchFound: "تطابق موجود",
+      matched: "متطابق",
+      confidence: "الثقة",
+      active: "نشط",
+      inactive: "غير نشط",
+      ready: "جاهز",
+      volume: "الصوت",
+      ayahs: "آيات",
+      recentTranscriptions: "التسجيلات الأخيرة",
+      noMatchTranscriptions: "تسجيلات غير متطابقة",
+      
       // Accessibility
       toggleLanguage: "تبديل اللغة",
       toggleTheme: "تبديل المظهر",
@@ -129,6 +146,23 @@ const resources = {
       theme: "Theme",
       lightTheme: "Light",
       darkTheme: "Dark",
+      
+      // New Advanced Features
+      selectSura: "Select Sura",
+      selectAya: "Select Aya",
+      currentAya: "Current Aya",
+      rewindToBeginning: "Return to Beginning",
+      skip: "Skip",
+      matchFound: "Match Found",
+      matched: "Matched",
+      confidence: "Confidence",
+      active: "Active",
+      inactive: "Inactive",
+      ready: "Ready",
+      volume: "Volume",
+      ayahs: "Ayahs",
+      recentTranscriptions: "Recent Transcriptions",
+      noMatchTranscriptions: "No Match Transcriptions",
       
       // Accessibility
       toggleLanguage: "Toggle Language",

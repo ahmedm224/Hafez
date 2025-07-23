@@ -4,7 +4,7 @@ import { loadQuran } from './quranParser';
 import type { QuranData } from './quranParser';
 import { Header } from './components/Header';
 import { useTheme } from './hooks/useTheme';
-import { audioRecorder, transcriptionService } from './services/audioService';
+import { RecitationSessionManager, type SessionConfig, type SessionState, type MatchResult } from './services/recitationSessionManager';
 
 function App() {
   const { t, i18n } = useTranslation();
@@ -13,33 +13,33 @@ function App() {
   const [quran, setQuran] = useState<QuranData | null>(null);
   const [selectedSuraIdx, setSelectedSuraIdx] = useState<number>(1);
   const [selectedAyaIdx, setSelectedAyaIdx] = useState<number>(1);
-  const [isRecording, setIsRecording] = useState<boolean>(false);
-  const [isTranscribing, setIsTranscribing] = useState<boolean>(false);
-  const [recognizedText, setRecognizedText] = useState<string>('');
+  const [sessionManager, setSessionManager] = useState<RecitationSessionManager | null>(null);
+  const [sessionState, setSessionState] = useState<SessionState>({
+    isActive: false,
+    isRecording: false,
+    isProcessing: false,
+    recentTranscriptions: [],
+    sessionStats: null,
+    volumeLevel: 0
+  });
+  
+  // Legacy state for UI compatibility
   const [completed, setCompleted] = useState<{ [key: string]: boolean }>({});
-  const [currentRecitation, setCurrentRecitation] = useState<string>('');
-  const [ayaProgress, setAyaProgress] = useState<number>(0);
-  const [showCorrectAya, setShowCorrectAya] = useState<boolean>(false);
-  const [recitationHistory, setRecitationHistory] = useState<Array<{ayaIndex: number, correct: boolean, recitedText: string, expectedText: string, accuracy: number}>>([]);
-  const [lastCorrectAya, setLastCorrectAya] = useState<number>(1);
+  const [currentMatch, setCurrentMatch] = useState<MatchResult | null>(null);
+  const [noMatchTranscriptions, setNoMatchTranscriptions] = useState<string[]>([]);
   const [showFeedback, setShowFeedback] = useState(false);
-  const [isProcessing, setIsProcessing] = useState<boolean>(false);
-  const [processingProgress, setProcessingProgress] = useState<{
-    ayasChecked: number;
-    totalAyas: number;
-    currentlyChecking: number;
-    results: Array<{ayaIndex: number, completed: boolean, accuracy: number}>;
-  }>({ ayasChecked: 0, totalAyas: 0, currentlyChecking: 0, results: [] });
   const [countdown, setCountdown] = useState<number>(0);
   const [isCountingDown, setIsCountingDown] = useState<boolean>(false);
   
-  const processingTimeoutRef = useRef<any>(null);
   const countdownIntervalRef = useRef<any>(null);
 
+  // Initialize session manager when Quran is loaded
   useEffect(() => {
     loadQuran().then(data => {
       setQuran(data);
-      console.log('✅ Quran loaded successfully:', data.suras.length, 'suras');
+      const manager = new RecitationSessionManager(data);
+      setSessionManager(manager);
+      console.log('✅ Quran loaded and session manager initialized');
     }).catch(err => {
       console.error('❌ Failed to load Quran:', err);
     });
@@ -54,15 +54,14 @@ function App() {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      audioRecorder.cleanup();
-      if (processingTimeoutRef.current) {
-        clearTimeout(processingTimeoutRef.current);
+      if (sessionManager) {
+        sessionManager.cleanup();
       }
       if (countdownIntervalRef.current) {
         clearInterval(countdownIntervalRef.current);
       }
     };
-  }, []);
+  }, [sessionManager]);
 
   const sura = quran?.suras.find(s => s.index === selectedSuraIdx);
   const aya = sura?.ayas.find(a => a.index === selectedAyaIdx);
@@ -76,6 +75,11 @@ function App() {
   const startRecording = async () => {
     if (!navigator.onLine) {
       alert(t('internetRequired'));
+      return;
+    }
+
+    if (!sessionManager) {
+      alert('Session manager not ready');
       return;
     }
 
@@ -103,37 +107,62 @@ function App() {
   };
 
   const startActualRecording = async () => {
+    if (!sessionManager) return;
+
     try {
-      await audioRecorder.startRecording();
-      setIsRecording(true);
-      setCurrentRecitation('');
-      setRecognizedText('');
-      console.log('🎤 Audio recording started');
+      const config: SessionConfig = {
+        suraIndex: selectedSuraIdx,
+        startingAyah: selectedAyaIdx,
+        windowSize: 3,
+        minChunkDuration: 2000,
+        maxChunkDuration: 30000
+      };
+
+      await sessionManager.startSession(config, {
+        onMatchFound: (match: MatchResult) => {
+          console.log('🎯 Match found:', match);
+          setCurrentMatch(match);
+          setShowFeedback(true);
+          
+          // Mark ayahs as completed
+          for (let i = match.startAyah; i <= match.endAyah; i++) {
+            const key = `${selectedSuraIdx}:${i}`;
+            setCompleted(prev => ({ ...prev, [key]: true }));
+          }
+          
+          // Advance to next ayah
+          setTimeout(() => {
+            const nextAyah = match.endAyah + 1;
+            if (sura && nextAyah <= sura.ayas.length) {
+              setSelectedAyaIdx(nextAyah);
+            } else if (quran && selectedSuraIdx < quran.suras.length) {
+              setSelectedSuraIdx(selectedSuraIdx + 1);
+              setSelectedAyaIdx(1);
+            }
+            setShowFeedback(false);
+          }, 2000);
+        },
+        
+        onNoMatch: (transcription: string) => {
+          console.log('❌ No match for:', transcription);
+          setNoMatchTranscriptions(prev => [transcription, ...prev.slice(0, 4)]);
+        },
+        
+        onStateChange: (state: SessionState) => {
+          setSessionState(state);
+        },
+        
+        onError: (error: Error) => {
+          console.error('Session error:', error);
+          alert(error.message);
+        }
+      });
+
+      console.log('🎤 Advanced recording session started');
     } catch (error) {
-      console.error('Failed to start recording:', error);
+      console.error('Failed to start recording session:', error);
       alert(error instanceof Error ? error.message : t('startFailed'));
     }
-  };
-
-  const handleAyaAdvancement = (nextAyaIdx: number) => {
-    setShowCorrectAya(true);
-    setTimeout(() => {
-      if (sura && nextAyaIdx <= sura.ayas.length) {
-        setSelectedAyaIdx(nextAyaIdx);
-        console.log('Moving to Aya:', nextAyaIdx);
-      } else if (quran && selectedSuraIdx < quran.suras.length) {
-        setSelectedSuraIdx(selectedSuraIdx + 1);
-        setSelectedAyaIdx(1);
-      } else {
-        setIsRecording(false);
-        audioRecorder.cleanup();
-        alert(t('congratulations'));
-      }
-      setCurrentRecitation('');
-      setRecognizedText('');
-      setAyaProgress(0);
-      setShowCorrectAya(false);
-    }, 800); // Faster response
   };
 
   const stopRecording = async () => {
@@ -144,66 +173,17 @@ function App() {
       setCountdown(0);
     }
     
-    if (audioRecorder.isRecording()) {
-      console.log('🔴 Stopping recording and transcribing...');
-      setIsRecording(false);
-      setIsTranscribing(true);
-      
-      try {
-        // Stop recording and get audio blob
-        const audioBlob = await audioRecorder.stopRecording();
-        
-        // Transcribe using Whisper
-        const transcribedText = await transcriptionService.transcribeAudio(audioBlob);
-        
-        console.log('📝 Transcribed text:', transcribedText);
-        setCurrentRecitation(transcribedText);
-        setRecognizedText(transcribedText);
-        setIsTranscribing(false);
-        
-        // Process the transcription
-        if (transcribedText.trim()) {
-          setIsProcessing(true);
-          processRecitationImmediate(transcribedText);
-        }
-      } catch (error) {
-        console.error('Error during transcription:', error);
-        setIsTranscribing(false);
-        alert(t('transcriptionFailed') || 'Transcription failed. Please try again.');
-      }
+    if (sessionManager && sessionManager.isSessionActive()) {
+      console.log('🔴 Stopping advanced recording session...');
+      sessionManager.stopSession();
     }
   };
 
-  const processRecitationImmediate = (recitationText?: string) => {
-    const textToProcess = recitationText || currentRecitation.trim();
-    
-    if (!textToProcess) {
-      setIsProcessing(false);
-      return;
+  const jumpToAyah = (ayahNumber: number) => {
+    if (sessionManager) {
+      sessionManager.jumpToAyah(ayahNumber);
+      setSelectedAyaIdx(ayahNumber);
     }
-
-    console.log('🔄 Processing recitation:', textToProcess);
-    
-    // Use a simple timeout to ensure it always completes
-    setTimeout(() => {
-      try {
-        const result = checkMultiAyaRecitation(textToProcess);
-        
-        // Always show results, even if not perfect
-        setIsProcessing(false);
-        setShowFeedback(true);
-        
-        if (result.completedAyas.length > 0) {
-          // Advance to the furthest completed Aya
-          const furthestAya = Math.max(...result.completedAyas);
-          handleAyaAdvancement(furthestAya + 1);
-        }
-      } catch (error) {
-        console.error('Processing error:', error);
-        setIsProcessing(false);
-        setShowFeedback(true);
-      }
-    }, 200); // Very quick processing
   };
 
   const rewindToBeginning = () => {
@@ -227,455 +207,194 @@ function App() {
       });
       return filtered;
     });
-    setRecitationHistory([]);
-    setLastCorrectAya(1);
-    setCurrentRecitation('');
-    setRecognizedText('');
-    setAyaProgress(0);
-    setShowCorrectAya(false);
     setShowFeedback(false);
-    setIsProcessing(false);
-    setProcessingProgress({ ayasChecked: 0, totalAyas: 0, currentlyChecking: 0, results: [] });
-    
-    // Clear any pending processing timeout
-    if (processingTimeoutRef.current) {
-      clearTimeout(processingTimeoutRef.current);
-      processingTimeoutRef.current = null;
-    }
     
     console.log(`🔄 Rewound to beginning of Sura ${selectedSuraIdx}`);
   };
 
-
-
-  const checkMultiAyaRecitation = (fullRecitation: string) => {
-    if (!aya || !sura) return { completedAyas: [], results: [] };
-    
-    console.log('🔍 Checking recitation against multiple Ayas starting from:', aya.index);
-    
-    // Simple but effective normalization for clean Quran text
-    const normalize = (str: string) => str
-      .replace(/[\u064B-\u0652]/g, '') // Remove diacritics (just in case)
-      .replace(/إ|أ|آ/g, 'ا') // Normalize all alif variations to simple alif
-      .replace(/ة/g, 'ه') // Ta marbuta to ha  
-      .replace(/ي/g, 'ى') // Ya variations
-      .replace(/\s+/g, ' ') // Normalize spaces
-      .trim()
-      .toLowerCase();
-    
-    const normalizedRecitation = normalize(fullRecitation);
-    const recitedWords = normalizedRecitation.split(/\s+/).filter(w => w.length > 0);
-    
-    // Get up to 10 Ayas starting from current position for realistic matching
-    const currentAyaIndex = selectedAyaIdx - 1;
-    const maxAyasToCheck = Math.min(10, sura.ayas.length - currentAyaIndex);
-    const ayasToCheck = sura.ayas.slice(currentAyaIndex, currentAyaIndex + maxAyasToCheck);
-    
-    console.log(`Checking against ${ayasToCheck.length} Ayas: ${ayasToCheck.map(a => a.index).join(', ')}`);
-    
-    // Create concatenated text of all Ayas to match against
-    let combinedAyaText = '';
-    let ayaBoundaries: Array<{ayaIndex: number, startWord: number, endWord: number, text: string}> = [];
-    let currentWordIndex = 0;
-    
-    for (const ayaToCheck of ayasToCheck) {
-      const normalizedAyaText = normalize(ayaToCheck.text);
-      const ayaWords = normalizedAyaText.split(/\s+/).filter(w => w.length > 0);
-      
-      if (combinedAyaText) combinedAyaText += ' ';
-      combinedAyaText += normalizedAyaText;
-      
-      ayaBoundaries.push({
-        ayaIndex: ayaToCheck.index,
-        startWord: currentWordIndex,
-        endWord: currentWordIndex + ayaWords.length - 1,
-        text: ayaToCheck.text
-      });
-      
-      currentWordIndex += ayaWords.length;
-    }
-    
-    const expectedWords = combinedAyaText.split(/\s+/).filter(w => w.length > 0);
-    
-    console.log('Expected words:', expectedWords.length);
-    console.log('Recited words:', recitedWords.length);
-    
-    // Debug: Log the actual words being compared
-    console.log('🔍 Expected words:', expectedWords.slice(0, 5), '...');
-    console.log('🔍 Recited words:', recitedWords.slice(0, 5), '...');
-    
-    // Enhanced matching with Arabic-specific logic
-    let longestMatch = 0;
-    for (let i = 0; i < Math.min(recitedWords.length, expectedWords.length); i++) {
-      const recitedWord = recitedWords[i];
-      const expectedWord = expectedWords[i];
-      
-      // Debug: Show each comparison
-      console.log(`🔍 Comparing [${i}]: "${recitedWord}" vs "${expectedWord}"`);
-      
-      if (recitedWord === expectedWord) {
-        longestMatch = i + 1;
-        console.log(`✅ Exact match at position ${i}`);
-      } else {
-        // Try enhanced Arabic matching
-        if (enhancedArabicMatch(recitedWord, expectedWord)) {
-          longestMatch = i + 1;
-          console.log(`✅ Enhanced match at position ${i}: "${recitedWord}" ≈ "${expectedWord}"`);
-        } else {
-          // Allow for one small mistake and continue
-          if (i + 1 < expectedWords.length && i + 1 < recitedWords.length) {
-            const nextRecited = recitedWords[i + 1];
-            const nextExpected = expectedWords[i + 1];
-            console.log(`🔍 Trying skip: "${nextRecited}" vs "${nextExpected}"`);
-            
-            if (nextRecited === nextExpected || enhancedArabicMatch(nextRecited, nextExpected)) {
-              longestMatch = i + 2;
-              i++; // Skip the mismatched word
-              console.log(`✅ Skip match at position ${i}`);
-              continue;
-            }
-          }
-          console.log(`❌ No match at position ${i}, stopping`);
-          break;
-        }
-      }
-    }
-    
-    console.log(`Longest match: ${longestMatch}/${expectedWords.length} words`);
-    
-    // Update processing progress
-    setProcessingProgress({
-      ayasChecked: ayasToCheck.length,
-      totalAyas: ayasToCheck.length,
-      currentlyChecking: 0,
-      results: []
-    });
-    
-    // Determine which Ayas were completed based on the match
-    let completedAyas: number[] = [];
-    let results: Array<{ayaIndex: number, completed: boolean, accuracy: number}> = [];
-    
-    for (const boundary of ayaBoundaries) {
-      const ayaStartWord = boundary.startWord;
-      const ayaEndWord = boundary.endWord;
-      
-      // Check how much of this Aya was covered by the match
-      const ayaWordsCovered = Math.max(0, Math.min(longestMatch - ayaStartWord, ayaEndWord - ayaStartWord + 1));
-      const ayaTotalWords = ayaEndWord - ayaStartWord + 1;
-      const accuracy = (ayaWordsCovered / ayaTotalWords) * 100;
-      
-      const isCompleted = accuracy >= 70; // Reasonable threshold
-      
-      if (isCompleted) {
-        completedAyas.push(boundary.ayaIndex);
-        
-        // Mark as completed in state
-        setCompleted(prev => ({ ...prev, [`${selectedSuraIdx}:${boundary.ayaIndex}`]: true }));
-        setLastCorrectAya(boundary.ayaIndex);
-      }
-      
-      // Add to recitation history
-      setRecitationHistory(prev => {
-        const existingIndex = prev.findIndex(h => h.ayaIndex === boundary.ayaIndex);
-        
-        // Extract only the words that correspond to this specific Aya
-        const ayaSpecificWords = recitedWords.slice(
-          Math.max(0, Math.min(ayaStartWord, longestMatch)),
-          Math.max(0, Math.min(ayaEndWord + 1, longestMatch))
-        );
-        const ayaSpecificRecitation = ayaSpecificWords.join(' ');
-        
-        const newEntry = {
-          ayaIndex: boundary.ayaIndex,
-          correct: isCompleted,
-          recitedText: ayaSpecificRecitation || '(لم يتم التلاوة)', // If empty, show "not recited"
-          expectedText: boundary.text,
-          accuracy
-        };
-        
-        if (existingIndex >= 0) {
-          const updated = [...prev];
-          updated[existingIndex] = newEntry;
-          return updated;
-        } else {
-          return [...prev, newEntry];
-        }
-      });
-      
-      results.push({
-        ayaIndex: boundary.ayaIndex,
-        completed: isCompleted,
-        accuracy
-      });
-      
-      console.log(`Aya ${boundary.ayaIndex}: ${ayaWordsCovered}/${ayaTotalWords} words (${accuracy.toFixed(1)}%) - ${isCompleted ? 'COMPLETED' : 'partial'}`);
-    }
-    
-    // Update processing results for UI
-    setProcessingProgress(prev => ({
-      ...prev,
-      results
-    }));
-    
-    // Update progress for the current Aya
-    if (results.length > 0) {
-      setAyaProgress(results[0].accuracy);
-    }
-    
-    console.log(`✅ Processing complete. Completed Ayas: ${completedAyas.join(', ')}`);
-    
-    return { completedAyas, results };
-  };
-
-  const enhancedArabicMatch = (word1: string, word2: string): boolean => {
-    if (!word1 || !word2) return false;
-    
-    // Focused normalization for speech recognition vs clean Quran text
-    const speechNormalize = (str: string) => str
-      .replace(/[\u064B-\u0652]/g, '') // Remove diacritics
-      .replace(/إ|أ|آ/g, 'ا') // All alif variations to simple alif (main issue)
-      .replace(/ة/g, 'ه') // Ta marbuta to ha
-      .replace(/ي/g, 'ى') // Ya variations
-      .replace(/ک/g, 'ك') // Farsi kaf to Arabic kaf
-      .replace(/ؤ/g, 'و') // Hamza on waw
-      .replace(/ئ/g, 'ي') // Hamza on ya
-      .trim()
-      .toLowerCase();
-    
-    const norm1 = speechNormalize(word1);
-    const norm2 = speechNormalize(word2);
-    
-    // Exact match after normalization should work for most cases now
-    if (norm1 === norm2) return true;
-    
-    // Fallback: similarity check for edge cases
-    if (norm1.length > 2 && norm2.length > 2) {
-      const similarity = calculateSimilarity(norm1, norm2);
-      return similarity >= 0.85; // Slightly higher threshold since text is cleaner
-    }
-    
-    return false;
-  };
-
-  const calculateSimilarity = (str1: string, str2: string): number => {
-    const longer = str1.length > str2.length ? str1 : str2;
-    const shorter = str1.length > str2.length ? str2 : str1;
-    
-    if (longer.length === 0) return 1.0;
-    
-    const editDistance = levenshteinDistance(longer, shorter);
-    return (longer.length - editDistance) / longer.length;
-  };
-
-  const levenshteinDistance = (str1: string, str2: string): number => {
-    const matrix = [];
-    
-    for (let i = 0; i <= str2.length; i++) {
-      matrix[i] = [i];
-    }
-    
-    for (let j = 0; j <= str1.length; j++) {
-      matrix[0][j] = j;
-    }
-    
-    for (let i = 1; i <= str2.length; i++) {
-      for (let j = 1; j <= str1.length; j++) {
-        if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
-          matrix[i][j] = matrix[i - 1][j - 1];
-        } else {
-          matrix[i][j] = Math.min(
-            matrix[i - 1][j - 1] + 1, // substitution
-            matrix[i][j - 1] + 1,     // insertion
-            matrix[i - 1][j] + 1      // deletion
-          );
-        }
-      }
-    }
-    
-    return matrix[str2.length][str1.length];
-  };
+  if (!quran) {
+    return (
+      <div className="app loading">
+        <div className="loading-container">
+          <div className="loading-spinner"></div>
+          <p>{t('loading')}</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="app-container">
+    <div className="app">
       <Header />
       
-      <main>
-        <section className="review-section">
-          <div className="quran-text">
-            {isCountingDown ? (
-              <div className="countdown-display">
-                <div className="countdown-number">{countdown > 0 ? countdown : '🎤'}</div>
-                <div className="countdown-text">
-                  {countdown > 0 ? t('getReady') : t('startReciting')}
-                </div>
-              </div>
-            ) : isRecording ? (
-              <div className="countdown-display">
-                <div className="countdown-number">🎤</div>
-                <div className="countdown-text">
-                  {t('recording')} - {t('speakNow')}!
-                </div>
-              </div>
-            ) : isTranscribing ? (
-              <div className="countdown-display">
-                <div className="countdown-number">⏳</div>
-                <div className="countdown-text">
-                  {t('transcribing')}...
-                </div>
-              </div>
-            ) : showCorrectAya ? (
-              <span className="aya-correct" style={{ color: 'var(--color-success)' }}>
-                ✅ {aya?.text}
-              </span>
-            ) : (
-              <span className="aya-hidden">
-                {t('reciteAya', { ayaNumber: selectedAyaIdx, suraName: sura?.name })}
-              </span>
-            )}
-          </div>
-          
-          <div className="controls">
-            <label>
-              {t('sura')}:
-              <select
-                value={selectedSuraIdx}
-                onChange={e => {
-                  const idx = Number(e.target.value);
-                  setSelectedSuraIdx(idx);
-                  setSelectedAyaIdx(1);
-                }}
-                disabled={isRecording || isTranscribing}
+      <main className="main-content">
+        {/* Sura/Aya Selector */}
+        <section className="selector-section">
+          <div className="selector-container">
+            <div className="selector-group">
+              <label>{t('selectSura')}:</label>
+              <select 
+                value={selectedSuraIdx} 
+                onChange={(e) => setSelectedSuraIdx(Number(e.target.value))}
+                disabled={sessionState.isActive}
               >
-                {quran?.suras.map(s => (
-                  <option key={s.index} value={s.index}>{s.name}</option>
+                {quran.suras.map(sura => (
+                  <option key={sura.index} value={sura.index}>
+                    {sura.index}. {sura.name}
+                  </option>
                 ))}
               </select>
-            </label>
-            
-            <label>
-              {t('aya')}:
-              <select
-                value={selectedAyaIdx}
-                onChange={e => setSelectedAyaIdx(Number(e.target.value))}
-                disabled={isRecording || isTranscribing}
-              >
-                {sura?.ayas.map(a => (
-                  <option key={a.index} value={a.index}>{a.index}</option>
-                ))}
-              </select>
-            </label>
-          </div>
-          
-          <div className="voice-controls">
-            <div className="voice-button-group">
-              <button 
-                className="primary-button"
-                onClick={isRecording ? stopRecording : startRecording}
-                disabled={isProcessing || isCountingDown || isTranscribing}
-              >
-                {isCountingDown ? (
-                  <>🕒 {countdown > 0 ? `${countdown}...` : t('startNow')}</>
-                ) : isRecording ? (
-                  <>🔴 {t('stopRecording')}</>
-                ) : isTranscribing ? (
-                  <>⏳ {t('transcribing')}...</>
-                ) : isProcessing ? (
-                  <>⏳ {t('processing')}... {processingProgress.ayasChecked}/{processingProgress.totalAyas}</>
-                ) : (
-                  <>🎤 {t('startRecording')}</>
-                )}
-              </button>
-              
-              <button 
-                className="secondary-button"
-                onClick={rewindToBeginning} 
-                disabled={isRecording || isTranscribing}
-                aria-label={t('rewind')}
-                title={t('rewind')}
-              >
-                ⏪
-              </button>
             </div>
             
-            {isProcessing && processingProgress.results.length > 0 && (
-              <div className="processing-status">
-                <strong>📊 {t('processingStatus')}:</strong>
-                <div className="processing-results">
-                  {processingProgress.results.map((result, index) => (
-                    <div key={index} className={`processing-item ${result.completed ? 'completed' : 'in-progress'}`}>
-                      {result.completed ? '✅' : '⏳'} {t('aya')} {result.ayaIndex}: {result.accuracy.toFixed(1)}%
-                    </div>
-                  ))}
-                </div>
-                {processingProgress.currentlyChecking > 0 && (
-                  <div className="currently-checking">
-                    🔍 {t('currentlyChecking')}: {t('aya')} {processingProgress.currentlyChecking}
-                  </div>
-                )}
-              </div>
-            )}
+            <div className="selector-group">
+              <label>{t('selectAya')}:</label>
+              <select 
+                value={selectedAyaIdx} 
+                onChange={(e) => setSelectedAyaIdx(Number(e.target.value))}
+                disabled={sessionState.isActive}
+              >
+                {sura?.ayas.map(aya => (
+                  <option key={aya.index} value={aya.index}>
+                    {aya.index}
+                  </option>
+                )) || []}
+              </select>
+            </div>
+          </div>
+        </section>
 
-            {recognizedText && (
-              <div className="recognized-text">
-                <strong>{t('currentRecitation')}:</strong>
-                <div className="recitation-text">
-                  {recognizedText}
-                </div>
-                {isRecording && ayaProgress > 0 && (
-                  <div className="progress-container">
-                    <span className="progress-label">
-                      {t('ayaProgress')}: {Math.round(ayaProgress)}%
-                    </span>
-                    <div className="progress-bar-container">
-                      <div
-                        className="progress-bar-fill"
-                        style={{
-                          backgroundColor: ayaProgress >= 90 ? 'var(--color-success)' : 
-                                         ayaProgress >= 50 ? 'var(--color-warning)' : 'var(--color-error)',
-                          width: `${Math.min(ayaProgress, 100)}%`
-                        }}
-                      />
-                    </div>
-                  </div>
-                )}
+        {/* Current Aya Display */}
+        <section className="aya-section">
+          <div className="aya-container">
+            <div className="aya-header">
+              <h2>{t('currentAya')}: {aya?.index} / {sura?.ayas.length}</h2>
+              <div className="aya-actions">
+                <button onClick={rewindToBeginning} className="action-btn secondary">
+                  {t('rewindToBeginning')}
+                </button>
+                <button 
+                  onClick={() => jumpToAyah(selectedAyaIdx + 1)} 
+                  className="action-btn secondary"
+                  disabled={!sura || selectedAyaIdx >= sura.ayas.length}
+                >
+                  {t('skip')}
+                </button>
               </div>
-            )}
+            </div>
             
-            {showFeedback && recitationHistory.length > 0 && (
-              <div className="feedback-modal">
-                <div className="feedback-header">
-                  <h3 className="feedback-title">{t('recitationAnalysis')}</h3>
-                  <button 
-                    className="close-button"
-                    onClick={() => setShowFeedback(false)}
-                    aria-label={t('close')}
-                  >
-                    ✕
-                  </button>
+            <div className="aya-text-container">
+              <div className="aya-text arabic">
+                {aya?.text}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Recording Controls */}
+        <section className="recording-section">
+          <div className="recording-controls">
+            {isCountingDown ? (
+              <div className="countdown-container">
+                <div className="countdown-circle">
+                  <span className="countdown-number">{countdown}</span>
                 </div>
-                <div className="feedback-content">
-                  {recitationHistory.map((entry, index) => (
-                    <div key={index} className={`feedback-item ${entry.correct ? 'correct' : 'incorrect'}`}>
-                      <div className="feedback-item-header">
-                        {entry.correct ? '✅' : '❌'} {t('aya')} {entry.ayaIndex} - {t('accuracy', { percentage: entry.accuracy.toFixed(1) })}
-                      </div>
-                      {!entry.correct && (
-                        <div className="feedback-details">
-                          <div><strong>{t('expected')}:</strong> {entry.expectedText}</div>
-                          <div><strong>{t('recited')}:</strong> {entry.recitedText}</div>
-                        </div>
-                      )}
+                <p>{t('getReady')}</p>
+              </div>
+            ) : (
+              <div className="control-buttons">
+                <button
+                  className={`record-btn ${sessionState.isRecording ? 'recording' : ''}`}
+                  onClick={sessionState.isRecording ? stopRecording : startRecording}
+                  disabled={sessionState.isProcessing}
+                >
+                  <div className="btn-content">
+                    <div className="record-icon">
+                      {sessionState.isRecording ? '⏹️' : '🎤'}
                     </div>
-                  ))}
-                </div>
-                <div className="feedback-summary">
-                  <strong>{t('lastCorrectAya', { ayaNumber: lastCorrectAya })}</strong>
-                </div>
+                    <span>
+                      {sessionState.isRecording ? t('stopRecording') : t('startRecording')}
+                    </span>
+                  </div>
+                </button>
               </div>
             )}
           </div>
+
+          {/* Session State Display */}
+          {sessionState.isActive && (
+            <div className="session-status">
+              <div className="status-item">
+                <span className="status-label">{t('recording')}:</span>
+                <span className={`status-value ${sessionState.isRecording ? 'active' : ''}`}>
+                  {sessionState.isRecording ? t('active') : t('inactive')}
+                </span>
+              </div>
+              <div className="status-item">
+                <span className="status-label">{t('processing')}:</span>
+                <span className={`status-value ${sessionState.isProcessing ? 'active' : ''}`}>
+                  {sessionState.isProcessing ? t('processing') : t('ready')}
+                </span>
+              </div>
+              {sessionState.isRecording && (
+                <div className="status-item">
+                  <span className="status-label">{t('volume')}:</span>
+                  <div className="volume-bar">
+                    <div 
+                      className="volume-fill" 
+                      style={{ width: `${Math.min(sessionState.volumeLevel + 60, 100)}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </section>
+
+        {/* Match Results */}
+        {showFeedback && currentMatch && (
+          <section className="feedback-section">
+            <div className="feedback-container">
+              <div className="feedback-header">
+                <h3>{t('matchFound')} ✅</h3>
+              </div>
+              <div className="match-details">
+                <p><strong>{t('matched')}:</strong> {t('ayahs')} {currentMatch.startAyah}-{currentMatch.endAyah}</p>
+                <p><strong>{t('confidence')}:</strong> {(currentMatch.confidence * 100).toFixed(1)}%</p>
+                <p><strong>{t('accuracy')}:</strong> {(currentMatch.accuracy * 100).toFixed(1)}%</p>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* Recent Transcriptions */}
+        {sessionState.recentTranscriptions.length > 0 && (
+          <section className="transcriptions-section">
+            <h3>{t('recentTranscriptions')}</h3>
+            <div className="transcriptions-list">
+              {sessionState.recentTranscriptions.map((transcription, index) => (
+                <div key={index} className="transcription-item">
+                  <span className="transcription-text">{transcription}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* No Match Transcriptions */}
+        {noMatchTranscriptions.length > 0 && (
+          <section className="no-match-section">
+            <h3>{t('noMatchTranscriptions')}</h3>
+            <div className="no-match-list">
+              {noMatchTranscriptions.map((transcription, index) => (
+                <div key={index} className="no-match-item">
+                  <span className="no-match-text">{transcription}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
         
+        {/* Progress Tracking */}
         <section className="progress-tracker">
           <h2>{t('progressTracking')}</h2>
           
@@ -717,5 +436,3 @@ function App() {
 }
 
 export default App;
-
-
