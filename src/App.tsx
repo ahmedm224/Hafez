@@ -404,13 +404,22 @@ function App() {
       // Add to recitation history
       setRecitationHistory(prev => {
         const existingIndex = prev.findIndex(h => h.ayaIndex === boundary.ayaIndex);
+        
+        // Extract only the words that correspond to this specific Aya
+        const ayaSpecificWords = recitedWords.slice(
+          Math.max(0, Math.min(ayaStartWord, longestMatch)),
+          Math.max(0, Math.min(ayaEndWord + 1, longestMatch))
+        );
+        const ayaSpecificRecitation = ayaSpecificWords.join(' ');
+        
         const newEntry = {
           ayaIndex: boundary.ayaIndex,
           correct: isCompleted,
-          recitedText: normalizedRecitation,
+          recitedText: ayaSpecificRecitation || '(لم يتم التلاوة)', // If empty, show "not recited"
           expectedText: boundary.text,
           accuracy
         };
+        
         if (existingIndex >= 0) {
           const updated = [...prev];
           updated[existingIndex] = newEntry;
