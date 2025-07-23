@@ -22,6 +22,7 @@ function App() {
   const [lastCorrectAya, setLastCorrectAya] = useState<number>(1);
   const [showFeedback, setShowFeedback] = useState(false);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [isRecognitionReady, setIsRecognitionReady] = useState<boolean>(false);
   const [processingProgress, setProcessingProgress] = useState<{
     ayasChecked: number;
     totalAyas: number;
@@ -85,9 +86,10 @@ function App() {
       return;
     }
 
-    // Start countdown first
+    // Start with longer countdown to account for recognition startup time
     setIsCountingDown(true);
-    setCountdown(3);
+    setIsRecognitionReady(false); // Reset ready state
+    setCountdown(5); // Increased from 3 to 5 seconds
     
     countdownIntervalRef.current = setInterval(() => {
       setCountdown(prev => {
@@ -118,13 +120,14 @@ function App() {
       console.log('🎤 Voice recognition started after countdown');
       setIsListening(true);
       setIsProcessing(false);
-      setShowFeedback(false);
-      setProcessingProgress({ ayasChecked: 0, totalAyas: 0, currentlyChecking: 0, results: [] });
-      // Clear any pending processing
-      if (processingTimeoutRef.current) {
-        clearTimeout(processingTimeoutRef.current);
-        processingTimeoutRef.current = null;
-      }
+      setCurrentRecitation('');
+      setRecognizedText('');
+      
+      // Add a small additional delay to ensure recognition is truly ready
+      setTimeout(() => {
+        console.log('🎯 Recognition is now fully ready - user can start reciting');
+        setIsRecognitionReady(true); // Signal that recognition is ready
+      }, 500); // Extra 500ms to ensure recognition is capturing
     };
 
     recognition.onresult = (event: any) => {
@@ -225,6 +228,8 @@ function App() {
       setCountdown(0);
     }
     
+    setIsRecognitionReady(false); // Reset ready state
+    
     if (recognitionRef.current) {
       console.log('🔴 Stopping recognition immediately...');
       setIsListening(false);
@@ -305,6 +310,8 @@ function App() {
       setIsCountingDown(false);
       setCountdown(0);
     }
+    
+    setIsRecognitionReady(false); // Reset recognition ready state
     
     // Keep current Sura, just reset to Aya 1
     setSelectedAyaIdx(1);
@@ -601,6 +608,20 @@ function App() {
                   {countdown > 0 ? t('getReady') : t('startReciting')}
                 </div>
               </div>
+            ) : isListening && !isRecognitionReady ? (
+              <div className="countdown-display">
+                <div className="countdown-number">⏳</div>
+                <div className="countdown-text">
+                  {t('preparingMicrophone')}...
+                </div>
+              </div>
+            ) : isListening && isRecognitionReady && !recognizedText ? (
+              <div className="countdown-display">
+                <div className="countdown-number">🎯</div>
+                <div className="countdown-text">
+                  {t('startReciting')} - {t('listening')}!
+                </div>
+              </div>
             ) : showCorrectAya ? (
               <span className="aya-correct" style={{ color: 'var(--color-success)' }}>
                 ✅ {aya?.text}
@@ -652,11 +673,13 @@ function App() {
                 disabled={isProcessing || isCountingDown}
               >
                 {isCountingDown ? (
-                  <>🕒 {countdown > 0 ? countdown : t('startNow')}</>
+                  <>🕒 {countdown > 0 ? `${countdown}...` : t('startNow')}</>
+                ) : isListening && !isRecognitionReady ? (
+                  <>⏳ {t('preparingMicrophone')}...</>
+                ) : isListening && isRecognitionReady ? (
+                  <>🔴 {t('stopRecitation')} (🎯 {t('listening')})</>
                 ) : isProcessing ? (
                   <>⏳ {t('processing')}... {processingProgress.ayasChecked}/{processingProgress.totalAyas}</>
-                ) : isListening ? (
-                  <>🔴 {t('stopRecitation')}</>
                 ) : (
                   <>🎤 {t('startRecitation')}</>
                 )}

@@ -46,6 +46,8 @@ const resources = {
       networkError: "خطأ في الشبكة. التعرف على الصوت يتطلب اتصال إنترنت مستقر. يرجى التحقق من اتصالك والمحاولة مرة أخرى.",
       serviceUnavailable: "خدمة التعرف على الصوت غير متاحة. يرجى المحاولة لاحقاً.",
       startFailed: "فشل في بدء التعرف على الصوت. يرجى التأكد من وجود اتصال بالإنترنت والمحاولة مرة أخرى.",
+      preparingMicrophone: "تحضير الميكروفون",
+      listening: "نشط",
       congratulations: "مبروك! لقد أتممت حفظ القرآن الكريم! 🎉",
       
       // UI Controls
@@ -105,6 +107,8 @@ const resources = {
       networkError: "Network error. Voice recognition requires a stable internet connection. Please check your connection and try again.",
       serviceUnavailable: "Voice recognition service is unavailable. Please try again later.",
       startFailed: "Failed to start voice recognition. Please ensure you have an internet connection and try again.",
+      preparingMicrophone: "Preparing Microphone",
+      listening: "Listening",
       congratulations: "Congratulations! You have completed memorizing the Holy Quran! 🎉",
       
       // UI Controls
